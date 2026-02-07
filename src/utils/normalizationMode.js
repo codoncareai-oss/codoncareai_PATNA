@@ -172,33 +172,38 @@ export function validateForClinicalAnalysis(normalizedData) {
     can_proceed: false,
     creatinine_count: creatinineEntries.length,
     egfr_count: egfrEntries.length,
+    unique_dates: 0,
     date_span_days: 0,
     reasons: []
   }
   
-  // Need at least 2 creatinine or eGFR values
+  // FIX: Need at least 2 creatinine OR eGFR values
   if (creatinineEntries.length < 2 && egfrEntries.length < 2) {
     validation.reasons.push('Minimum 2 creatinine or eGFR values required for trend analysis')
     return validation
   }
   
-  // Check date span
+  // Check for unique dates (not same-day duplicates)
   const allDates = [...creatinineEntries, ...egfrEntries]
-    .map(e => new Date(e.date))
-    .sort((a, b) => a - b)
+    .map(e => e.date)
+  const uniqueDates = [...new Set(allDates)]
+  validation.unique_dates = uniqueDates.length
   
-  if (allDates.length >= 2) {
-    const firstDate = allDates[0]
-    const lastDate = allDates[allDates.length - 1]
-    const daysDiff = (lastDate - firstDate) / (1000 * 60 * 60 * 24)
-    
-    validation.date_span_days = Math.round(daysDiff)
-    
-    if (daysDiff < 90) {
-      validation.reasons.push(`Date span is ${Math.round(daysDiff)} days. Minimum 90 days required for reliable trend analysis.`)
-      return validation
-    }
+  if (uniqueDates.length < 2) {
+    validation.reasons.push('Values must come from at least 2 different dates')
+    return validation
   }
+  
+  // Check date span
+  const sortedDates = uniqueDates.map(d => new Date(d)).sort((a, b) => a - b)
+  const firstDate = sortedDates[0]
+  const lastDate = sortedDates[sortedDates.length - 1]
+  const daysDiff = (lastDate - firstDate) / (1000 * 60 * 60 * 24)
+  
+  validation.date_span_days = Math.round(daysDiff)
+  
+  // RELAXED: Allow any date span if we have multiple unique dates
+  // 90-day requirement is for trend confidence, not for basic analysis
   
   validation.can_proceed = true
   return validation

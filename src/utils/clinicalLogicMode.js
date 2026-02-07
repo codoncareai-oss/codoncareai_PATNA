@@ -7,20 +7,27 @@ import { calculateEGFR } from './calculateEGFR'
 export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
   const creatinineEntries = normalizedData.filter(e => e.test === 'creatinine')
   
+  // Get unique dates
+  const uniqueDates = [...new Set(creatinineEntries.map(e => e.date))]
+  
   const gates = {
     passed: false,
     min_creatinine_values: creatinineEntries.length >= 2,
-    date_span_adequate: false,
+    unique_dates: uniqueDates.length >= 2,
     age_provided: patientAge !== null && patientAge > 0,
     gender_provided: patientGender !== null,
     reasons: []
   }
   
-  // MAJOR BUG FIX: Do NOT require explicit eGFR presence
-  // If ≥2 creatinine values exist with valid dates → Calculate eGFR
+  // CRITICAL FIX: Always calculate eGFR if creatinine exists
+  // Even if lab didn't report eGFR
   
   if (creatinineEntries.length < 2) {
     gates.reasons.push(`Only ${creatinineEntries.length} creatinine value(s) found. Minimum 2 required.`)
+  }
+  
+  if (uniqueDates.length < 2) {
+    gates.reasons.push(`Creatinine values from only ${uniqueDates.length} unique date(s). Need at least 2 different dates.`)
   }
   
   if (!gates.age_provided) {
@@ -31,18 +38,7 @@ export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
     gates.reasons.push('Patient gender required for eGFR calculation')
   }
   
-  // Check date span
-  if (creatinineEntries.length >= 2) {
-    const dates = creatinineEntries.map(e => new Date(e.date)).sort((a, b) => a - b)
-    const daysDiff = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24)
-    gates.date_span_adequate = daysDiff >= 90
-    
-    if (!gates.date_span_adequate) {
-      gates.reasons.push(`Date span is ${Math.round(daysDiff)} days. Minimum 90 days required for reliable trend analysis.`)
-    }
-  }
-  
-  gates.passed = gates.min_creatinine_values && gates.date_span_adequate && 
+  gates.passed = gates.min_creatinine_values && gates.unique_dates && 
                  gates.age_provided && gates.gender_provided
   
   return gates

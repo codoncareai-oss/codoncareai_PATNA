@@ -328,12 +328,76 @@ export default function Results() {
             onClick={() => setShowDebug(!showDebug)}
             className="text-sm text-gray-600 hover:text-gray-900 font-medium flex items-center"
           >
-            {showDebug ? '▼' : '▶'} View clinical logic gates debug
+            {showDebug ? '▼' : '▶'} Why analysis passed / failed (Debug Transparency)
           </button>
           {showDebug && (
-            <pre className="mt-4 text-xs text-gray-700 bg-white p-4 rounded border border-gray-300 overflow-auto max-h-96">
-              {JSON.stringify({ gates, trend, ckdStage }, null, 2)}
-            </pre>
+            <div className="mt-4 space-y-4">
+              {/* Detected Creatinine Values */}
+              <div className="bg-white p-4 rounded border border-gray-300">
+                <h4 className="font-semibold text-gray-900 mb-2">Detected Creatinine Values</h4>
+                {normalizedData.filter(d => d.test === 'creatinine').length > 0 ? (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Date</th>
+                        <th className="px-2 py-1 text-left">Value</th>
+                        <th className="px-2 py-1 text-left">Unit</th>
+                        <th className="px-2 py-1 text-left">Source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {normalizedData.filter(d => d.test === 'creatinine').map((d, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-2 py-1">{d.date}</td>
+                          <td className="px-2 py-1">{d.value.toFixed(2)}</td>
+                          <td className="px-2 py-1">{d.unit}</td>
+                          <td className="px-2 py-1 text-xs">{d.source}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-sm text-gray-600">No creatinine values detected</p>
+                )}
+              </div>
+              
+              {/* eGFR Calculation Status */}
+              <div className="bg-white p-4 rounded border border-gray-300">
+                <h4 className="font-semibold text-gray-900 mb-2">eGFR Calculation Status</h4>
+                {egfrData.length > 0 ? (
+                  <div className="space-y-2 text-sm">
+                    <p className="text-green-700">
+                      ✓ eGFR calculated for {egfrData.filter(e => e.source === 'calculated').length} time point(s)
+                    </p>
+                    <p className="text-gray-600">
+                      Total eGFR values: {egfrData.length} ({egfrData.filter(e => e.source === 'calculated').length} calculated, {egfrData.filter(e => e.source !== 'calculated').length} reported)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <p className="text-red-700">✗ No eGFR values available</p>
+                    {gates.egfrGate && (
+                      <div className="text-gray-600">
+                        <p className="font-medium">Reasons:</p>
+                        <ul className="list-disc list-inside ml-2">
+                          {gates.egfrGate.reasons.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Gate Status */}
+              <div className="bg-white p-4 rounded border border-gray-300">
+                <h4 className="font-semibold text-gray-900 mb-2">Clinical Logic Gates</h4>
+                <pre className="text-xs text-gray-700 overflow-auto">
+                  {JSON.stringify({ gates, trend, ckdStage }, null, 2)}
+                </pre>
+              </div>
+            </div>
           )}
         </motion.div>
 
