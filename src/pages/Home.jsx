@@ -23,8 +23,9 @@ export default function Home() {
           </h1>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto mb-8">
             Chronic Kidney Disease (CKD) is often silent until advanced stages. 
-            CodonCareAI helps you track trends in your kidney health markers over time, 
-            empowering early awareness and informed conversations with your healthcare provider.
+            CodonCareAI uses real PDF and image processing to extract lab values and help you track trends 
+            in your kidney health markers over time, empowering early awareness and informed conversations 
+            with your healthcare provider.
           </p>
           <div className="flex justify-center space-x-4">
             <Link 
@@ -74,7 +75,7 @@ export default function Home() {
             </div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">Simple Report Upload</h3>
             <p className="text-gray-600">
-              Upload your lab reports in CSV, PDF, or image format. We'll extract and analyze the key markers.
+              Upload your lab reports in CSV, PDF, or image format. We use PDF.js and Tesseract OCR to extract key markers.
             </p>
           </motion.div>
 

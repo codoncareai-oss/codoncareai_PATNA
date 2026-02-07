@@ -13,10 +13,15 @@ export default function Results() {
   const [patientInfo, setPatientInfo] = useState({})
   const [trendStatus, setTrendStatus] = useState('Stable')
   const [slope, setSlope] = useState(0)
+  const [extractedText, setExtractedText] = useState('')
+  const [confidence, setConfidence] = useState('High')
+  const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => {
     const data = sessionStorage.getItem('reportData')
     const info = sessionStorage.getItem('patientInfo')
+    const text = sessionStorage.getItem('extractedText')
+    const conf = sessionStorage.getItem('confidence')
     
     if (!data || !info) {
       navigate('/upload')
@@ -28,6 +33,8 @@ export default function Results() {
     
     setReportData(parsedData)
     setPatientInfo(parsedInfo)
+    setExtractedText(text || '')
+    setConfidence(conf || 'High')
     
     const calculatedSlope = calculateSlope(parsedData)
     setSlope(calculatedSlope)
@@ -59,17 +66,40 @@ export default function Results() {
           className="bg-white rounded-xl shadow-lg p-6 mb-6"
         >
           <h1 className="text-3xl font-bold text-gray-900 mb-4">Health Analysis Dashboard</h1>
-          <div className="flex items-center space-x-6 text-gray-600">
+          <div className="flex items-center space-x-6 text-gray-600 mb-4">
             <div>
               <span className="font-medium">Age:</span> {patientInfo.age}
             </div>
             <div>
               <span className="font-medium">Gender:</span> {patientInfo.gender}
             </div>
+            <div>
+              <span className="font-medium">Extraction Confidence:</span>{' '}
+              <span className={`font-semibold ${
+                confidence === 'High' ? 'text-green-600' : 
+                confidence === 'Medium' ? 'text-yellow-600' : 'text-red-600'
+              }`}>
+                {confidence}
+              </span>
+            </div>
           </div>
           <div className="mt-4">
             <TrendBadge status={trendStatus} />
           </div>
+          {confidence === 'Low' && (
+            <div className="mt-4 bg-yellow-50 border-l-4 border-yellow-500 p-3">
+              <p className="text-sm text-yellow-800">
+                ⚠️ This report may be scanned or unclear. Trends may be incomplete. Please verify extracted values.
+              </p>
+            </div>
+          )}
+          {reportData.some(d => d.calculated) && (
+            <div className="mt-4 bg-blue-50 border-l-4 border-blue-500 p-3">
+              <p className="text-sm text-blue-800">
+                ℹ️ Some eGFR values were calculated from creatinine (CKD-EPI 2021 equation).
+              </p>
+            </div>
+          )}
         </motion.div>
 
         {/* Main Chart */}
@@ -148,6 +178,27 @@ export default function Results() {
             Back to Home
           </button>
         </div>
+
+        {/* Debug Panel */}
+        {extractedText && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mt-6 bg-gray-50 rounded-xl p-6 border border-gray-200"
+          >
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              className="text-sm text-gray-600 hover:text-gray-900 font-medium flex items-center"
+            >
+              {showDebug ? '▼' : '▶'} View extracted raw text (debug)
+            </button>
+            {showDebug && (
+              <pre className="mt-4 text-xs text-gray-700 bg-white p-4 rounded border border-gray-300 overflow-auto max-h-96">
+                {extractedText}
+              </pre>
+            )}
+          </motion.div>
+        )}
       </div>
     </div>
   )

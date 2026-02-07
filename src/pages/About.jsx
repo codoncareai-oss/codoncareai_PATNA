@@ -76,9 +76,14 @@ export default function About() {
                 creatinine when needed. Trend analysis uses linear regression to calculate the rate of 
                 eGFR change over time.
               </p>
-              <p>
-                The application is built with React, Recharts for visualization, and runs entirely 
-                client-side for maximum privacy.
+              <p className="mb-3">
+                The application is built with React, Recharts for visualization, PDF.js for PDF text extraction, 
+                and Tesseract.js for OCR on scanned documents and images. All processing runs client-side 
+                for maximum privacy.
+              </p>
+              <p className="text-sm text-gray-600">
+                <strong>Phase 3 Features:</strong> Real PDF parsing, OCR for images, intelligent medical data 
+                extraction, date-value mapping, and extraction confidence indicators.
               </p>
             </section>
 

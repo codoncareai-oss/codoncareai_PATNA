@@ -4,6 +4,10 @@ import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import { parseCSV } from '../utils/parseCSV'
 import { calculateEGFR } from '../utils/calculateEGFR'
+import { extractTextFromPDF } from '../utils/pdfTextExtract'
+import { extractTextFromImage } from '../utils/ocrExtract'
+import { parseMedicalData, calculateConfidence } from '../utils/medicalParser'
+import { mapToTimeline } from '../utils/dateValueMapper'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -12,6 +16,9 @@ export default function Upload() {
   const [file, setFile] = useState(null)
   const [notes, setNotes] = useState('')
   const [dragActive, setDragActive] = useState(false)
+  const [processing, setProcessing] = useState(false)
+  const [processingStatus, setProcessingStatus] = useState('')
+  const [ocrProgress, setOcrProgress] = useState(0)
 
   const handleDrag = (e) => {
     e.preventDefault()
@@ -46,46 +53,97 @@ export default function Upload() {
       return
     }
 
+    setProcessing(true)
+    setProcessingStatus('Processing file...')
+    
     let reportData = []
+    let extractedText = ''
+    let confidence = 'High'
 
-    // If CSV, parse it
-    if (file.name.endsWith('.csv')) {
-      const text = await file.text()
-      const parsed = parseCSV(text)
-      
-      reportData = parsed.map(row => {
-        const egfr = row.egfr ? parseFloat(row.egfr) : 
-                     row.creatinine ? calculateEGFR(parseFloat(row.creatinine), parseInt(age), gender) : null
+    try {
+      // CSV - direct parsing
+      if (file.name.endsWith('.csv')) {
+        const text = await file.text()
+        const parsed = parseCSV(text)
         
-        return {
-          date: row.date || new Date().toISOString().split('T')[0],
-          egfr: egfr,
-          creatinine: row.creatinine ? parseFloat(row.creatinine) : null,
-          pth: row.pth ? parseFloat(row.pth) : null,
-          hemoglobin: row.hemoglobin ? parseFloat(row.hemoglobin) : null
+        reportData = parsed.map(row => {
+          const egfr = row.egfr ? parseFloat(row.egfr) : 
+                       row.creatinine ? calculateEGFR(parseFloat(row.creatinine), parseInt(age), gender) : null
+          
+          return {
+            date: row.date || null,
+            egfr: egfr,
+            creatinine: row.creatinine ? parseFloat(row.creatinine) : null,
+            pth: row.pth ? parseFloat(row.pth) : null,
+            hemoglobin: row.hemoglobin ? parseFloat(row.hemoglobin) : null,
+            phosphorus: row.phosphorus ? parseFloat(row.phosphorus) : null,
+            bicarbonate: row.bicarbonate ? parseFloat(row.bicarbonate) : null
+          }
+        }).filter(d => d.date && d.egfr)
+      } 
+      // PDF - extract text
+      else if (file.name.endsWith('.pdf')) {
+        setProcessingStatus('Extracting text from PDF...')
+        extractedText = await extractTextFromPDF(file)
+        
+        if (!extractedText || extractedText.length < 50) {
+          setProcessing(false)
+          alert('Could not extract text from PDF. It may be scanned. Try uploading as an image (PNG/JPG) for OCR.')
+          return
         }
-      })
-    } else {
-      // Generate mock data for PDF/images
-      const today = new Date()
-      reportData = Array.from({ length: 6 }, (_, i) => {
-        const date = new Date(today)
-        date.setMonth(date.getMonth() - (5 - i) * 2)
-        const creatinine = 1.2 + (i * 0.15)
-        return {
-          date: date.toISOString().split('T')[0],
-          egfr: calculateEGFR(creatinine, parseInt(age), gender),
-          creatinine: creatinine,
-          pth: 45 + (i * 8),
-          hemoglobin: 13.5 - (i * 0.3)
+        
+        const parsed = parseMedicalData(extractedText)
+        confidence = calculateConfidence(parsed)
+        
+        if (parsed.date && (parsed.egfr || parsed.creatinine)) {
+          reportData = mapToTimeline([parsed], parseInt(age), gender)
         }
-      })
-    }
+      }
+      // Image - OCR
+      else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
+        setProcessingStatus('Running OCR on image...')
+        const ocrResult = await extractTextFromImage(file, setOcrProgress)
+        
+        if (!ocrResult || !ocrResult.text) {
+          setProcessing(false)
+          alert('OCR failed. Please try a clearer image or PDF.')
+          return
+        }
+        
+        extractedText = ocrResult.text
+        
+        if (ocrResult.confidence < 60) {
+          confidence = 'Low'
+        }
+        
+        const parsed = parseMedicalData(extractedText)
+        const dataConfidence = calculateConfidence(parsed)
+        if (dataConfidence === 'Low') confidence = 'Low'
+        
+        if (parsed.date && (parsed.egfr || parsed.creatinine)) {
+          reportData = mapToTimeline([parsed], parseInt(age), gender)
+        }
+      }
 
-    // Store in sessionStorage and navigate
-    sessionStorage.setItem('reportData', JSON.stringify(reportData))
-    sessionStorage.setItem('patientInfo', JSON.stringify({ age, gender, notes }))
-    navigate('/results')
+      // Validation
+      if (reportData.length === 0) {
+        setProcessing(false)
+        alert('We could not reliably extract structured data from this report. Please check the file or try CSV format.')
+        return
+      }
+
+      // Store and navigate
+      sessionStorage.setItem('reportData', JSON.stringify(reportData))
+      sessionStorage.setItem('patientInfo', JSON.stringify({ age, gender, notes }))
+      sessionStorage.setItem('extractedText', extractedText)
+      sessionStorage.setItem('confidence', confidence)
+      
+      navigate('/results')
+    } catch (error) {
+      console.error('Processing error:', error)
+      setProcessing(false)
+      alert('An error occurred while processing the file. Please try again.')
+    }
   }
 
   return (
@@ -187,10 +245,23 @@ export default function Upload() {
             {/* Submit */}
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg"
+              disabled={processing}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Analyze Report
+              {processing ? processingStatus : 'Analyze Report'}
             </button>
+            
+            {processing && ocrProgress > 0 && (
+              <div className="mt-2">
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${ocrProgress}%` }}
+                  />
+                </div>
+                <p className="text-sm text-gray-600 text-center mt-1">{ocrProgress}%</p>
+              </div>
+            )}
           </form>
         </motion.div>
       </div>

@@ -72,21 +72,43 @@ src/
 ## 🔬 Features
 
 - Upload lab reports (CSV, PDF, PNG, JPG)
+- **Real PDF text extraction** using PDF.js
+- **OCR for scanned documents** using Tesseract.js
+- **Intelligent medical data parsing** with pattern matching
+- **Date-value mapping** for chronological trends
 - Calculate eGFR using CKD-EPI 2021 equation
 - Visualize trends with interactive charts
-- Track serum creatinine, PTH, hemoglobin
+- Track serum creatinine, PTH, hemoglobin, phosphorus, bicarbonate
 - Calculate eGFR slope and trend status
-- Privacy-first: no server uploads
+- **Extraction confidence indicators** (High/Medium/Low)
+- **Debug panel** to view extracted raw text
+- Privacy-first: no server uploads, all processing in browser
 
 ## 📊 CSV Format
 
 For best results, upload a CSV with these columns:
 
 ```csv
-date,creatinine,egfr,pth,hemoglobin
-2024-01-15,1.2,65.3,45,13.5
-2024-03-20,1.35,58.7,52,13.2
+date,creatinine,egfr,pth,hemoglobin,phosphorus,bicarbonate
+2024-01-15,1.2,65.3,45,13.5,4.2,22
+2024-03-20,1.35,58.7,52,13.2,4.5,21
 ```
+
+## 📄 PDF & Image Support
+
+**PDF Reports:**
+- Text-based PDFs are automatically parsed
+- Scanned PDFs should be uploaded as images for OCR
+
+**Image Reports (PNG/JPG):**
+- Tesseract.js OCR extracts text automatically
+- Works best with clear, high-contrast images
+- Progress indicator shows OCR status
+
+**Extracted Data:**
+- Serum Creatinine, eGFR, Hemoglobin, PTH, Phosphorus, Bicarbonate
+- Report dates are automatically detected
+- Confidence level indicates extraction quality
 
 ## 🤝 Contributing
 
