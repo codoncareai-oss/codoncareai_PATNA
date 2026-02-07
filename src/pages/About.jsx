@@ -73,18 +73,28 @@ export default function About() {
               <h2 className="text-2xl font-semibold text-gray-900 mb-3">Technical Details</h2>
               <p className="mb-3">
                 CodonCareAI uses the CKD-EPI 2021 equation (race-free) to calculate eGFR from serum 
-                creatinine when needed. Trend analysis uses linear regression to calculate the rate of 
-                eGFR change over time.
+                creatinine when needed. Age is calculated at the time of each test for accuracy. 
+                Trend analysis uses linear regression to calculate the rate of eGFR change over time.
               </p>
               <p className="mb-3">
                 The application is built with React, Recharts for visualization, PDF.js for PDF text extraction, 
                 and Tesseract.js for OCR on scanned documents and images. All processing runs client-side 
                 for maximum privacy.
               </p>
-              <p className="text-sm text-gray-600">
-                <strong>Phase 3 Features:</strong> Real PDF parsing, OCR for images, intelligent medical data 
-                extraction, date-value mapping, and extraction confidence indicators.
+              <p className="text-sm text-gray-600 mb-2">
+                <strong>Phase 3.1 Features:</strong>
               </p>
+              <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-4">
+                <li>Multi-report upload (unlimited files)</li>
+                <li>10+ year longitudinal timeline support</li>
+                <li>Format-agnostic parsing (works with any lab)</li>
+                <li>Master timeline with chronological sorting</li>
+                <li>Age-adjusted eGFR calculation</li>
+                <li>Trend confidence indicators</li>
+                <li>Safe CKD staging (only when justified)</li>
+                <li>Debug transparency panel</li>
+                <li>Data mapping table view</li>
+              </ul>
             </section>
 
             <section className="bg-blue-50 rounded-lg p-6 border-l-4 border-blue-500">

@@ -3,21 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import { parseCSV } from '../utils/parseCSV'
-import { calculateEGFR } from '../utils/calculateEGFR'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
-import { parseMedicalData, calculateConfidence } from '../utils/medicalParser'
-import { mapToTimeline } from '../utils/dateValueMapper'
+import { parseMedicalData, calculateConfidence, determinePrimaryDate } from '../utils/medicalParser'
+import { buildMasterTimeline } from '../utils/dateValueMapper'
 
 export default function Upload() {
   const navigate = useNavigate()
-  const [age, setAge] = useState('')
+  const [birthYear, setBirthYear] = useState('')
   const [gender, setGender] = useState('Male')
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([])
   const [notes, setNotes] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [processingStatus, setProcessingStatus] = useState('')
+  const [currentFile, setCurrentFile] = useState('')
   const [ocrProgress, setOcrProgress] = useState(0)
 
   const handleDrag = (e) => {
@@ -34,115 +34,148 @@ export default function Upload() {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0])
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setFiles(Array.from(e.dataTransfer.files))
     }
   }
 
   const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0])
+    if (e.target.files && e.target.files.length > 0) {
+      setFiles(Array.from(e.target.files))
     }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     
-    if (!age || !file) {
-      alert('Please provide age and upload a file')
+    if (!birthYear || files.length === 0) {
+      alert('Please provide birth year and upload at least one file')
+      return
+    }
+
+    const currentYear = new Date().getFullYear()
+    const year = parseInt(birthYear)
+    if (year < 1900 || year > currentYear) {
+      alert('Please enter a valid birth year')
       return
     }
 
     setProcessing(true)
-    setProcessingStatus('Processing file...')
+    setProcessingStatus(`Processing ${files.length} file(s)...`)
     
-    let reportData = []
-    let extractedText = ''
-    let confidence = 'High'
+    const extractedReports = []
+    let allExtractedText = ''
 
     try {
-      // CSV - direct parsing
-      if (file.name.endsWith('.csv')) {
-        const text = await file.text()
-        const parsed = parseCSV(text)
+      // Process each file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
         
-        reportData = parsed.map(row => {
-          const egfr = row.egfr ? parseFloat(row.egfr) : 
-                       row.creatinine ? calculateEGFR(parseFloat(row.creatinine), parseInt(age), gender) : null
+        let extractedText = ''
+        let parsedData = null
+        
+        // CSV - direct parsing
+        if (file.name.endsWith('.csv')) {
+          setProcessingStatus('Parsing CSV...')
+          const text = await file.text()
+          const parsed = parseCSV(text)
           
-          return {
-            date: row.date || null,
-            egfr: egfr,
-            creatinine: row.creatinine ? parseFloat(row.creatinine) : null,
-            pth: row.pth ? parseFloat(row.pth) : null,
-            hemoglobin: row.hemoglobin ? parseFloat(row.hemoglobin) : null,
-            phosphorus: row.phosphorus ? parseFloat(row.phosphorus) : null,
-            bicarbonate: row.bicarbonate ? parseFloat(row.bicarbonate) : null
+          // Each CSV row is a separate report
+          for (const row of parsed) {
+            if (row.date) {
+              extractedReports.push({
+                sourceFile: file.name,
+                primaryDate: row.date,
+                data: {
+                  creatinine: row.creatinine ? parseFloat(row.creatinine) : null,
+                  egfr: row.egfr ? parseFloat(row.egfr) : null,
+                  hemoglobin: row.hemoglobin ? parseFloat(row.hemoglobin) : null,
+                  pth: row.pth ? parseFloat(row.pth) : null,
+                  phosphorus: row.phosphorus ? parseFloat(row.phosphorus) : null,
+                  bicarbonate: row.bicarbonate ? parseFloat(row.bicarbonate) : null,
+                  dates: [row.date]
+                }
+              })
+            }
           }
-        }).filter(d => d.date && d.egfr)
-      } 
-      // PDF - extract text
-      else if (file.name.endsWith('.pdf')) {
-        setProcessingStatus('Extracting text from PDF...')
-        extractedText = await extractTextFromPDF(file)
-        
-        if (!extractedText || extractedText.length < 50) {
-          setProcessing(false)
-          alert('Could not extract text from PDF. It may be scanned. Try uploading as an image (PNG/JPG) for OCR.')
-          return
+        } 
+        // PDF - extract text
+        else if (file.name.endsWith('.pdf')) {
+          setProcessingStatus('Extracting text from PDF...')
+          extractedText = await extractTextFromPDF(file)
+          
+          if (!extractedText || extractedText.length < 50) {
+            console.warn(`Could not extract text from ${file.name}`)
+            continue
+          }
+          
+          parsedData = parseMedicalData(extractedText)
+          const primaryDate = determinePrimaryDate(parsedData.dates)
+          
+          if (primaryDate) {
+            extractedReports.push({
+              sourceFile: file.name,
+              primaryDate: primaryDate,
+              data: parsedData
+            })
+            allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
+          }
         }
-        
-        const parsed = parseMedicalData(extractedText)
-        confidence = calculateConfidence(parsed)
-        
-        if (parsed.date && (parsed.egfr || parsed.creatinine)) {
-          reportData = mapToTimeline([parsed], parseInt(age), gender)
-        }
-      }
-      // Image - OCR
-      else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
-        setProcessingStatus('Running OCR on image...')
-        const ocrResult = await extractTextFromImage(file, setOcrProgress)
-        
-        if (!ocrResult || !ocrResult.text) {
-          setProcessing(false)
-          alert('OCR failed. Please try a clearer image or PDF.')
-          return
-        }
-        
-        extractedText = ocrResult.text
-        
-        if (ocrResult.confidence < 60) {
-          confidence = 'Low'
-        }
-        
-        const parsed = parseMedicalData(extractedText)
-        const dataConfidence = calculateConfidence(parsed)
-        if (dataConfidence === 'Low') confidence = 'Low'
-        
-        if (parsed.date && (parsed.egfr || parsed.creatinine)) {
-          reportData = mapToTimeline([parsed], parseInt(age), gender)
+        // Image - OCR
+        else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
+          setProcessingStatus(`Running OCR on image ${i + 1}...`)
+          const ocrResult = await extractTextFromImage(file, setOcrProgress)
+          
+          if (!ocrResult || !ocrResult.text) {
+            console.warn(`OCR failed for ${file.name}`)
+            continue
+          }
+          
+          extractedText = ocrResult.text
+          parsedData = parseMedicalData(extractedText)
+          const primaryDate = determinePrimaryDate(parsedData.dates)
+          
+          if (primaryDate) {
+            extractedReports.push({
+              sourceFile: file.name,
+              primaryDate: primaryDate,
+              data: parsedData
+            })
+            allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
+          }
         }
       }
 
       // Validation
-      if (reportData.length === 0) {
+      if (extractedReports.length === 0) {
         setProcessing(false)
-        alert('We could not reliably extract structured data from this report. Please check the file or try CSV format.')
+        alert('We could not reliably extract structured data from any of the uploaded reports. Please check the files or try CSV format.')
+        return
+      }
+
+      // Build master timeline
+      setProcessingStatus('Building timeline...')
+      const timeline = buildMasterTimeline(extractedReports, year, gender)
+      
+      // Check if we have kidney data
+      if (timeline.egfr.length === 0 && timeline.creatinine.length === 0) {
+        setProcessing(false)
+        alert('No kidney function markers (eGFR or creatinine) found in the uploaded reports.')
         return
       }
 
       // Store and navigate
-      sessionStorage.setItem('reportData', JSON.stringify(reportData))
-      sessionStorage.setItem('patientInfo', JSON.stringify({ age, gender, notes }))
-      sessionStorage.setItem('extractedText', extractedText)
-      sessionStorage.setItem('confidence', confidence)
+      sessionStorage.setItem('timeline', JSON.stringify(timeline))
+      sessionStorage.setItem('extractedReports', JSON.stringify(extractedReports))
+      sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
+      sessionStorage.setItem('extractedText', allExtractedText)
       
       navigate('/results')
     } catch (error) {
       console.error('Processing error:', error)
       setProcessing(false)
-      alert('An error occurred while processing the file. Please try again.')
+      alert('An error occurred while processing the files. Please try again.')
     }
   }
 
@@ -159,17 +192,19 @@ export default function Upload() {
           <h1 className="text-3xl font-bold text-gray-900 mb-6">Analyze Your Report</h1>
           
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Age */}
+            {/* Birth Year */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Age *
+                Birth Year * (for age-adjusted eGFR calculation)
               </label>
               <input
                 type="number"
-                value={age}
-                onChange={(e) => setAge(e.target.value)}
+                value={birthYear}
+                onChange={(e) => setBirthYear(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter your age"
+                placeholder="e.g., 1965"
+                min="1900"
+                max={new Date().getFullYear()}
                 required
               />
             </div>
@@ -198,7 +233,7 @@ export default function Upload() {
             {/* File Upload */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Upload Report *
+                Upload Reports * (Multiple files supported)
               </label>
               <div
                 onDragEnter={handleDrag}
@@ -213,6 +248,7 @@ export default function Upload() {
                   type="file"
                   onChange={handleFileChange}
                   accept=".pdf,.png,.jpg,.jpeg,.csv"
+                  multiple
                   className="hidden"
                   id="file-upload"
                 />
@@ -221,11 +257,21 @@ export default function Upload() {
                     <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <p className="mt-2 text-sm text-gray-600">
-                    {file ? file.name : 'Click to upload or drag and drop'}
+                    {files.length > 0 ? `${files.length} file(s) selected` : 'Click to upload or drag and drop'}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">PDF, PNG, JPG, or CSV</p>
+                  <p className="text-xs text-gray-500 mt-1">PDF, PNG, JPG, or CSV (up to 200 files)</p>
                 </label>
               </div>
+              {files.length > 0 && (
+                <div className="mt-2 text-sm text-gray-600">
+                  <p className="font-medium">Selected files:</p>
+                  <ul className="list-disc list-inside max-h-32 overflow-y-auto">
+                    {files.map((f, i) => (
+                      <li key={i}>{f.name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             {/* Notes */}
@@ -251,15 +297,20 @@ export default function Upload() {
               {processing ? processingStatus : 'Analyze Report'}
             </button>
             
-            {processing && ocrProgress > 0 && (
+            {processing && (
               <div className="mt-2">
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${ocrProgress}%` }}
-                  />
-                </div>
-                <p className="text-sm text-gray-600 text-center mt-1">{ocrProgress}%</p>
+                <p className="text-sm text-gray-600 text-center mb-2">{currentFile}</p>
+                {ocrProgress > 0 && (
+                  <>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${ocrProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-sm text-gray-600 text-center mt-1">{ocrProgress}%</p>
+                  </>
+                )}
               </div>
             )}
           </form>

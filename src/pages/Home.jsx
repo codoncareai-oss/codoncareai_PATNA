@@ -19,13 +19,13 @@ export default function Home() {
             Early Awareness Saves Kidneys
           </div>
           <h1 className="text-5xl font-bold text-gray-900 mb-6">
-            Awareness Through Trends in Kidney Health
+            Longitudinal Kidney Health Awareness
           </h1>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto mb-8">
             Chronic Kidney Disease (CKD) is often silent until advanced stages. 
-            CodonCareAI uses real PDF and image processing to extract lab values and help you track trends 
-            in your kidney health markers over time, empowering early awareness and informed conversations 
-            with your healthcare provider.
+            CodonCareAI supports multi-report uploads spanning 10+ years, using format-agnostic parsing 
+            to track trends in your kidney health markers over time, empowering early awareness and 
+            informed conversations with your healthcare provider.
           </p>
           <div className="flex justify-center space-x-4">
             <Link 
@@ -73,9 +73,9 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
             </div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">Simple Report Upload</h3>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Multi-Report Upload</h3>
             <p className="text-gray-600">
-              Upload your lab reports in CSV, PDF, or image format. We use PDF.js and Tesseract OCR to extract key markers.
+              Upload unlimited lab reports (PDF, image, CSV) from any laboratory. Format-agnostic parsing works across 10+ years of data.
             </p>
           </motion.div>
 
