@@ -5,9 +5,8 @@ import Disclaimer from '../components/Disclaimer'
 import { parseCSV } from '../utils/parseCSV'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
-import { parseMedicalData, calculateConfidence, determinePrimaryDate } from '../utils/medicalParser'
-import { detectTableStructure, parseTableData, hasKidneyMarkers, generateTableDebugInfo } from '../utils/tableParser'
-import { buildMasterTimeline } from '../utils/dateValueMapper'
+import { understandReport, canAnalyzeKidneyFunction } from '../utils/understandingMode'
+import { normalizeLabData, validateForClinicalAnalysis } from '../utils/normalizationMode'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -62,60 +61,24 @@ export default function Upload() {
     }
 
     setProcessing(true)
-    setProcessingStatus(`Processing ${files.length} file(s)...`)
+    setProcessingStatus('Processing files...')
     
-    const extractedReports = []
     let allExtractedText = ''
-    let allTableDebugInfo = ''
+    const allUnderstandings = []
 
     try {
-      // Process each file
+      // LAYER 1: UNDERSTANDING MODE - Extract and detect without interpretation
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
         
         let extractedText = ''
-        let dataPoints = []
         
-        // CSV - direct parsing
+        // Extract text based on file type
         if (file.name.endsWith('.csv')) {
-          setProcessingStatus('Parsing CSV...')
-          const text = await file.text()
-          const parsed = parseCSV(text)
-          
-          // Each CSV row is a separate data point
-          for (const row of parsed) {
-            if (row.date) {
-              if (row.creatinine) {
-                dataPoints.push({ marker: 'creatinine', value: parseFloat(row.creatinine), date: row.date })
-              }
-              if (row.egfr) {
-                dataPoints.push({ marker: 'egfr', value: parseFloat(row.egfr), date: row.date })
-              }
-              if (row.hemoglobin) {
-                dataPoints.push({ marker: 'hemoglobin', value: parseFloat(row.hemoglobin), date: row.date })
-              }
-              if (row.pth) {
-                dataPoints.push({ marker: 'pth', value: parseFloat(row.pth), date: row.date })
-              }
-              if (row.phosphorus) {
-                dataPoints.push({ marker: 'phosphorus', value: parseFloat(row.phosphorus), date: row.date })
-              }
-              if (row.bicarbonate) {
-                dataPoints.push({ marker: 'bicarbonate', value: parseFloat(row.bicarbonate), date: row.date })
-              }
-            }
-          }
-          
-          if (dataPoints.length > 0) {
-            extractedReports.push({
-              sourceFile: file.name,
-              dataPoints: dataPoints
-            })
-          }
-        } 
-        // PDF - extract text
-        else if (file.name.endsWith('.pdf')) {
+          setProcessingStatus('Reading CSV...')
+          extractedText = await file.text()
+        } else if (file.name.endsWith('.pdf')) {
           setProcessingStatus('Extracting text from PDF...')
           extractedText = await extractTextFromPDF(file)
           
@@ -123,45 +86,7 @@ export default function Upload() {
             console.warn(`Could not extract text from ${file.name}`)
             continue
           }
-          
-          // Try table detection first
-          const tables = detectTableStructure(extractedText)
-          allTableDebugInfo += generateTableDebugInfo(tables)
-          
-          if (tables.length > 0) {
-            // Parse table data
-            for (const table of tables) {
-              const tableData = parseTableData(table, extractedText)
-              dataPoints.push(...tableData)
-            }
-          }
-          
-          // Fallback to single-date parsing if no tables or no data
-          if (dataPoints.length === 0) {
-            const parsedData = parseMedicalData(extractedText)
-            const primaryDate = determinePrimaryDate(parsedData.dates)
-            
-            if (primaryDate) {
-              // Convert to data points
-              for (const [marker, value] of Object.entries(parsedData)) {
-                if (marker !== 'dates' && value !== null) {
-                  dataPoints.push({ marker, value, date: primaryDate })
-                }
-              }
-            }
-          }
-          
-          // Check if kidney-relevant
-          if (dataPoints.length > 0 || hasKidneyMarkers(extractedText)) {
-            extractedReports.push({
-              sourceFile: file.name,
-              dataPoints: dataPoints
-            })
-            allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
-          }
-        }
-        // Image - OCR
-        else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
+        } else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
           setProcessingStatus(`Running OCR on image ${i + 1}...`)
           const ocrResult = await extractTextFromImage(file, setOcrProgress)
           
@@ -171,73 +96,133 @@ export default function Upload() {
           }
           
           extractedText = ocrResult.text
-          
-          // Try table detection first
-          const tables = detectTableStructure(extractedText)
-          allTableDebugInfo += generateTableDebugInfo(tables)
-          
-          if (tables.length > 0) {
-            for (const table of tables) {
-              const tableData = parseTableData(table, extractedText)
-              dataPoints.push(...tableData)
-            }
-          }
-          
-          // Fallback to single-date parsing
-          if (dataPoints.length === 0) {
-            const parsedData = parseMedicalData(extractedText)
-            const primaryDate = determinePrimaryDate(parsedData.dates)
-            
-            if (primaryDate) {
-              for (const [marker, value] of Object.entries(parsedData)) {
-                if (marker !== 'dates' && value !== null) {
-                  dataPoints.push({ marker, value, date: primaryDate })
-                }
-              }
-            }
-          }
-          
-          if (dataPoints.length > 0 || hasKidneyMarkers(extractedText)) {
-            extractedReports.push({
-              sourceFile: file.name,
-              dataPoints: dataPoints
-            })
-            allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
-          }
+        }
+        
+        if (extractedText) {
+          // LAYER 1: Understand the report
+          const understanding = understandReport(extractedText)
+          understanding.sourceFile = file.name
+          allUnderstandings.push(understanding)
+          allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
 
-      // Validation
-      if (extractedReports.length === 0) {
+      if (allUnderstandings.length === 0) {
         setProcessing(false)
-        alert('We could not reliably extract structured data from any of the uploaded reports. Please check the files or try CSV format.')
+        navigate('/understanding', {
+          state: {
+            understanding: {
+              detected_tests: [],
+              detected_dates: [],
+              format: 'unknown',
+              tables_detected: false,
+              extraction_confidence: 'low',
+              source_hints: []
+            },
+            normalizedData: [],
+            validation: {
+              can_proceed: false,
+              reasons: {
+                has_kidney_markers: false,
+                has_multiple_dates: false,
+                min_dates_required: 2,
+                actual_dates: 0
+              }
+            }
+          }
+        })
         return
       }
 
-      // Build master timeline
-      setProcessingStatus('Building timeline...')
-      const timeline = buildMasterTimeline(extractedReports, year, gender)
+      // Merge all understandings
+      const mergedUnderstanding = mergeUnderstandings(allUnderstandings)
       
-      // Check if we have kidney data
-      if (timeline.egfr.length === 0 && timeline.creatinine.length === 0) {
-        setProcessing(false)
-        alert('No kidney function markers (eGFR or creatinine) found in the uploaded reports.')
-        return
+      // Check if kidney analysis is possible
+      const analysisCheck = canAnalyzeKidneyFunction(mergedUnderstanding)
+      
+      // LAYER 2: NORMALIZATION MODE - Convert to canonical format
+      setProcessingStatus('Normalizing data...')
+      let allNormalizedData = []
+      
+      for (const understanding of allUnderstandings) {
+        const fileText = allExtractedText.split(`=== ${understanding.sourceFile} ===`)[1]?.split('===')[0] || ''
+        const normalized = normalizeLabData(fileText, understanding)
+        allNormalizedData.push(...normalized)
       }
-
-      // Store and navigate
-      sessionStorage.setItem('timeline', JSON.stringify(timeline))
-      sessionStorage.setItem('extractedReports', JSON.stringify(extractedReports))
-      sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
+      
+      // Validate for clinical analysis
+      const validation = validateForClinicalAnalysis(allNormalizedData)
+      
+      // Store data and navigate to Understanding Summary
+      sessionStorage.setItem('understanding', JSON.stringify(mergedUnderstanding))
+      sessionStorage.setItem('normalizedData', JSON.stringify(allNormalizedData))
       sessionStorage.setItem('extractedText', allExtractedText)
-      sessionStorage.setItem('tableDebugInfo', allTableDebugInfo)
+      sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
       
-      navigate('/results')
+      navigate('/understanding', {
+        state: {
+          understanding: mergedUnderstanding,
+          normalizedData: allNormalizedData,
+          validation: {
+            can_proceed: analysisCheck.possible && validation.can_proceed,
+            ...analysisCheck.reasons,
+            ...validation
+          }
+        }
+      })
+      
     } catch (error) {
       console.error('Processing error:', error)
       setProcessing(false)
       alert('An error occurred while processing the files. Please try again.')
+    } finally {
+      setProcessing(false)
     }
+  }
+
+  function mergeUnderstandings(understandings) {
+    const merged = {
+      detected_tests: [],
+      detected_dates: [],
+      format: 'mixed',
+      tables_detected: false,
+      extraction_confidence: 'medium',
+      source_hints: []
+    }
+    
+    const testMap = new Map()
+    const dateSet = new Set()
+    const sourceSet = new Set()
+    
+    for (const u of understandings) {
+      // Merge tests
+      for (const test of u.detected_tests) {
+        if (testMap.has(test.normalized_candidate)) {
+          const existing = testMap.get(test.normalized_candidate)
+          existing.count += test.count
+        } else {
+          testMap.set(test.normalized_candidate, { ...test })
+        }
+      }
+      
+      // Merge dates
+      for (const date of u.detected_dates) {
+        dateSet.add(JSON.stringify(date))
+      }
+      
+      // Merge sources
+      for (const source of u.source_hints) {
+        sourceSet.add(source)
+      }
+      
+      if (u.tables_detected) merged.tables_detected = true
+    }
+    
+    merged.detected_tests = Array.from(testMap.values())
+    merged.detected_dates = Array.from(dateSet).map(d => JSON.parse(d))
+    merged.source_hints = Array.from(sourceSet)
+    
+    return merged
   }
 
   return (
