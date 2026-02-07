@@ -5,7 +5,6 @@ import Disclaimer from '../components/Disclaimer'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
 import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
-import { analyzeCapabilities } from '../utils/clinicalAnalyzer'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -111,19 +110,14 @@ export default function Upload() {
         return
       }
 
-      // Analyze capabilities
-      const capabilities = analyzeCapabilities(allDataPoints, year, gender)
-      
       // Store and navigate
       sessionStorage.setItem('clinicalDataPoints', JSON.stringify(allDataPoints))
-      sessionStorage.setItem('capabilities', JSON.stringify(capabilities))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
       sessionStorage.setItem('extractedText', allExtractedText)
       
       navigate('/understanding', {
         state: {
-          dataPoints: allDataPoints,
-          capabilities: capabilities
+          dataPoints: allDataPoints
         }
       })
       

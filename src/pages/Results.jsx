@@ -1,31 +1,26 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import EGFRChart from '../components/EGFRChart'
 import MarkerCard from '../components/MarkerCard'
 import TrendBadge from '../components/TrendBadge'
-import { calculateEGFRFromCreatinine, determineCKDStage, calculateTrend } from '../utils/clinicalAnalyzer'
+import { calculateEGFRFromCreatinine, calculateTrend, determineCKDStage } from '../utils/clinicalAnalyzer'
+import { getDataPointsForTest, countOccurrences } from '../utils/clinicalDataExtractor'
 
 export default function Results() {
   const navigate = useNavigate()
-  const location = useLocation()
   const [dataPoints, setDataPoints] = useState([])
-  const [capabilities, setCapabilities] = useState({})
   const [patientInfo, setPatientInfo] = useState({})
-  const [egfrData, setEgfrData] = useState([])
-  const [ckdStage, setCkdStage] = useState(null)
+  const [egfrSeries, setEgfrSeries] = useState([])
   const [trend, setTrend] = useState(null)
+  const [ckdStage, setCkdStage] = useState(null)
+  const [canAnalyze, setCanAnalyze] = useState(false)
+  const [blockReason, setBlockReason] = useState('')
   const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => {
-    if (!location.state?.confirmed) {
-      navigate('/upload')
-      return
-    }
-
     const points = JSON.parse(sessionStorage.getItem('clinicalDataPoints') || '[]')
-    const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}')
     const info = JSON.parse(sessionStorage.getItem('patientInfo') || '{}')
     
     if (points.length === 0 || !info.birthYear) {
@@ -34,42 +29,67 @@ export default function Results() {
     }
 
     setDataPoints(points)
-    setCapabilities(caps)
     setPatientInfo(info)
+
+    // Gate: Need creatinine for ≥2 dates
+    const creatininePoints = getDataPointsForTest(points, 'creatinine')
+    const uniqueDates = new Set(creatininePoints.map(p => p.date_iso))
     
-    // Calculate eGFR if possible
-    if (caps.can_calculate_egfr) {
-      const creatininePoints = points.filter(p => p.canonical_test_key === 'creatinine')
-      const calculatedEgfr = calculateEGFRFromCreatinine(creatininePoints, info.birthYear, info.gender)
-      
-      // Combine with reported eGFR
-      const reportedEgfr = points.filter(p => p.canonical_test_key === 'egfr')
-      const allEgfr = [...reportedEgfr, ...calculatedEgfr].sort((a, b) => a.date_iso.localeCompare(b.date_iso))
-      setEgfrData(allEgfr)
-      
-      // Determine CKD stage
-      if (caps.can_stage_ckd && allEgfr.length > 0) {
-        const latest = allEgfr[allEgfr.length - 1]
-        const stage = determineCKDStage(latest.value)
-        setCkdStage(stage)
-      }
-      
-      // Calculate trend
-      if (caps.can_show_trend && allEgfr.length >= 2) {
-        const trendResult = calculateTrend(allEgfr)
-        setTrend(trendResult)
-      }
+    if (uniqueDates.size < 2) {
+      setCanAnalyze(false)
+      setBlockReason(`Only ${uniqueDates.size} creatinine date(s) found. Need ≥2 for analysis.`)
+      return
     }
-  }, [navigate, location])
+
+    setCanAnalyze(true)
+
+    // Calculate eGFR for each creatinine
+    const egfrData = []
+    const currentYear = new Date().getFullYear()
+    
+    for (const point of creatininePoints) {
+      const testYear = parseInt(point.date_iso.split('-')[0])
+      const age = testYear - info.birthYear
+      
+      if (age < 1 || age > 120) continue
+      
+      const egfr = calculateEGFRFromCreatinine(point.value, age, info.gender)
+      egfrData.push({
+        date: point.date_iso,
+        value: egfr
+      })
+    }
+
+    // Add reported eGFR if exists
+    const reportedEgfr = getDataPointsForTest(points, 'egfr')
+    for (const point of reportedEgfr) {
+      egfrData.push({
+        date: point.date_iso,
+        value: point.value
+      })
+    }
+
+    const sorted = egfrData.sort((a, b) => a.date.localeCompare(b.date))
+    setEgfrSeries(sorted)
+
+    // Calculate trend
+    if (sorted.length >= 2) {
+      const trendResult = calculateTrend(sorted)
+      setTrend(trendResult)
+    }
+
+    // Determine CKD stage
+    if (sorted.length > 0) {
+      const latest = sorted[sorted.length - 1].value
+      const stage = determineCKDStage(latest)
+      setCkdStage(stage)
+    }
+
+  }, [navigate])
 
   if (dataPoints.length === 0) return null
 
-  const chartData = egfrData.map(e => ({
-    date: e.date_iso,
-    egfr: e.value,
-    calculated: e.source === 'calculated'
-  }))
-
+  // Latest values for each test
   const latestValues = {}
   for (const point of dataPoints) {
     const key = point.canonical_test_key
@@ -94,62 +114,76 @@ export default function Results() {
           </p>
         </motion.div>
 
-        {/* eGFR Chart */}
-        {capabilities.can_show_graph && (
+        {!canAnalyze ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white rounded-xl shadow-lg p-6 mb-8"
+            className="bg-yellow-50 border-l-4 border-yellow-500 p-6 mb-8"
           >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold text-gray-900">eGFR Trend</h2>
-              {trend && <TrendBadge trend={trend.label} confidence={trend.confidence} />}
-            </div>
-            <EGFRChart data={chartData} />
-            {egfrData.some(e => e.source === 'calculated') && (
+            <h2 className="text-xl font-bold text-yellow-900 mb-2">Cannot Generate Analysis</h2>
+            <p className="text-yellow-800">{blockReason}</p>
+          </motion.div>
+        ) : (
+          <>
+            {/* eGFR Chart */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="bg-white rounded-xl shadow-lg p-6 mb-8"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-gray-900">eGFR Trend</h2>
+                {trend && <TrendBadge trend={trend.trend} />}
+              </div>
+              <EGFRChart data={egfrSeries.map(e => ({ date: e.date, egfr: e.value }))} />
               <p className="text-sm text-gray-500 mt-4">
-                * Calculated values derived from creatinine using CKD-EPI 2021 formula
+                * eGFR calculated using CKD-EPI 2021 formula (race-free)
               </p>
-            )}
-          </motion.div>
-        )}
+            </motion.div>
 
-        {/* CKD Stage */}
-        {ckdStage ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-white rounded-xl shadow-lg p-6 mb-8"
-          >
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">CKD Stage</h2>
-            <div className="flex items-center space-x-4">
-              <div className={`text-4xl font-bold ${
-                ckdStage.stage === 'G2' ? 'text-yellow-600' :
-                ckdStage.stage === 'G3a' || ckdStage.stage === 'G3b' ? 'text-orange-600' :
-                'text-red-600'
-              }`}>
-                {ckdStage.stage}
-              </div>
-              <div>
-                <div className="text-lg font-semibold text-gray-900">{ckdStage.description}</div>
-                <div className="text-sm text-gray-600">eGFR: {ckdStage.egfr_range}</div>
-              </div>
-            </div>
-          </motion.div>
-        ) : capabilities.can_stage_ckd === false && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="bg-green-50 border-l-4 border-green-500 p-6 mb-8"
-          >
-            <h2 className="text-xl font-bold text-green-900 mb-2">No CKD Detected</h2>
-            <p className="text-green-800">
-              Latest eGFR is ≥90 mL/min/1.73m², indicating normal or high kidney function.
-            </p>
-          </motion.div>
+            {/* CKD Stage */}
+            {ckdStage ? (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-white rounded-xl shadow-lg p-6 mb-8"
+              >
+                <h2 className="text-2xl font-bold text-gray-900 mb-4">CKD Stage</h2>
+                <div className="flex items-center space-x-4">
+                  <div className={`text-4xl font-bold ${
+                    ckdStage === 'G2' ? 'text-yellow-600' :
+                    ckdStage === 'G3a' || ckdStage === 'G3b' ? 'text-orange-600' :
+                    'text-red-600'
+                  }`}>
+                    {ckdStage}
+                  </div>
+                  <div>
+                    <div className="text-lg font-semibold text-gray-900">
+                      {ckdStage === 'G2' && 'Mildly decreased kidney function'}
+                      {ckdStage === 'G3a' && 'Mild to moderate reduction'}
+                      {ckdStage === 'G3b' && 'Moderate to severe reduction'}
+                      {ckdStage === 'G4' && 'Severe reduction'}
+                      {ckdStage === 'G5' && 'Kidney failure'}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-green-50 border-l-4 border-green-500 p-6 mb-8"
+              >
+                <h2 className="text-xl font-bold text-green-900 mb-2">No CKD Detected</h2>
+                <p className="text-green-800">
+                  Latest eGFR is ≥90 mL/min/1.73m², indicating normal kidney function.
+                </p>
+              </motion.div>
+            )}
+          </>
         )}
 
         {/* Latest Values */}
@@ -173,11 +207,34 @@ export default function Results() {
           </div>
         </motion.div>
 
-        {/* Debug Panel */}
+        {/* Detected Tests Summary */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
+          className="bg-white rounded-xl shadow-lg p-6 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Detected Tests</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {['creatinine', 'urea', 'hemoglobin', 'egfr', 'pth', 'phosphorus', 'bicarbonate', 'calcium'].map(test => {
+              const count = countOccurrences(dataPoints, test)
+              if (count === 0) return null
+              return (
+                <div key={test} className="bg-gray-50 p-3 rounded">
+                  <div className="text-sm text-gray-600 capitalize">{test}</div>
+                  <div className="text-xl font-bold text-gray-900">{count}</div>
+                  <div className="text-xs text-gray-500">occurrence(s)</div>
+                </div>
+              )
+            })}
+          </div>
+        </motion.div>
+
+        {/* Debug Panel */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
           className="bg-white rounded-xl shadow-lg p-6"
         >
           <button
@@ -190,9 +247,13 @@ export default function Results() {
           {showDebug && (
             <div className="mt-4 space-y-4">
               <div>
-                <h3 className="font-semibold text-gray-900 mb-2">Capabilities</h3>
-                <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto">
-                  {JSON.stringify(capabilities, null, 2)}
+                <h3 className="font-semibold text-gray-900 mb-2">Analysis Status</h3>
+                <pre className="bg-gray-50 p-3 rounded text-xs">
+{`Can Analyze: ${canAnalyze}
+Block Reason: ${blockReason || 'None'}
+eGFR Points: ${egfrSeries.length}
+Trend: ${trend ? trend.trend : 'N/A'}
+CKD Stage: ${ckdStage || 'None'}`}
                 </pre>
               </div>
               <div>
