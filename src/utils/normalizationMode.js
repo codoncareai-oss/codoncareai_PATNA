@@ -1,13 +1,29 @@
 // LAYER 2: CANONICAL NORMALIZATION MODE
 // Convert all lab data to universal schema
 
+import { extractTableSeries, hasTableStructure } from './tableSeriesParser'
+
 export function normalizeLabData(extractedText, understanding) {
   const normalized = []
   
-  // Extract values for each detected test
+  // Try standard extraction first
   for (const test of understanding.detected_tests) {
     const values = extractValuesForTest(extractedText, test, understanding.detected_dates)
     normalized.push(...values)
+  }
+  
+  // CRITICAL BRIDGE FIX: If kidney markers detected but no date-value pairs
+  // AND table structure exists → invoke table series parser
+  const hasKidneyMarkers = understanding.detected_tests.some(t => 
+    t.normalized_candidate === 'creatinine' || t.normalized_candidate === 'egfr'
+  )
+  
+  const hasCreatinineValues = normalized.some(n => n.test === 'creatinine')
+  
+  if (hasKidneyMarkers && !hasCreatinineValues && hasTableStructure(extractedText)) {
+    // Fallback to table series extraction
+    const tableSeries = extractTableSeries(extractedText, understanding.detected_dates)
+    normalized.push(...tableSeries)
   }
   
   return normalized

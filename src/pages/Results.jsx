@@ -175,9 +175,38 @@ export default function Results() {
           <EGFRChart data={chartData} />
         ) : (
           <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <p className="text-center text-gray-600">
-              Insufficient eGFR data points for visualization. Minimum 2 values required.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">eGFR Trend Visualization</h3>
+            <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4">
+              <p className="text-sm text-yellow-800 font-medium mb-2">
+                Graph cannot be rendered
+              </p>
+              <p className="text-sm text-yellow-700">
+                {egfrData.length === 0 && 'No eGFR data points available.'}
+                {egfrData.length === 1 && 'Only one eGFR data point available. Minimum 2 time points required for trend visualization.'}
+              </p>
+              {gates.egfrGate && !gates.egfrGate.passed && (
+                <div className="mt-3 text-sm text-yellow-700">
+                  <p className="font-medium">Reasons:</p>
+                  <ul className="list-disc list-inside ml-2 mt-1">
+                    {gates.egfrGate.reasons.map((reason, i) => (
+                      <li key={i}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            
+            {/* Show detected biomarkers even if analysis blocked */}
+            {normalizedData.length > 0 && (
+              <div className="mt-4 p-4 bg-blue-50 rounded">
+                <p className="text-sm text-blue-800 font-medium mb-2">Detected Biomarkers:</p>
+                <div className="grid grid-cols-2 gap-2 text-sm text-blue-700">
+                  {[...new Set(normalizedData.map(d => d.display_name))].map((name, i) => (
+                    <div key={i}>• {name}</div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -147,8 +147,24 @@ export default function UnderstandingSummary() {
                         <li>Insufficient dates for trend analysis (need at least 2 time points)</li>
                       )}
                     </ul>
+                    <p className="text-sm text-gray-600 mt-3 italic">
+                      Tip: If your report has a table format with dates as column headers, ensure the dates are clearly visible and the creatinine values are in the same row.
+                    </p>
                   </div>
                 )}
+              </div>
+            )}
+            
+            {/* Show normalized data count */}
+            {normalizedData && normalizedData.length > 0 && (
+              <div className="mt-4 p-3 bg-white rounded">
+                <p className="text-sm text-gray-700">
+                  <strong>Extracted Data Points:</strong> {normalizedData.length}
+                </p>
+                <div className="text-xs text-gray-600 mt-2">
+                  {normalizedData.filter(d => d.test === 'creatinine').length} creatinine values, {' '}
+                  {normalizedData.filter(d => d.test === 'egfr').length} eGFR values
+                </div>
               </div>
             )}
           </div>

@@ -16,8 +16,11 @@ export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
     reasons: []
   }
   
-  if (!gates.min_creatinine_values) {
-    gates.reasons.push('Minimum 2 creatinine values required')
+  // MAJOR BUG FIX: Do NOT require explicit eGFR presence
+  // If ≥2 creatinine values exist with valid dates → Calculate eGFR
+  
+  if (creatinineEntries.length < 2) {
+    gates.reasons.push(`Only ${creatinineEntries.length} creatinine value(s) found. Minimum 2 required.`)
   }
   
   if (!gates.age_provided) {
@@ -35,7 +38,7 @@ export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
     gates.date_span_adequate = daysDiff >= 90
     
     if (!gates.date_span_adequate) {
-      gates.reasons.push(`Date span is ${Math.round(daysDiff)} days. Minimum 90 days required.`)
+      gates.reasons.push(`Date span is ${Math.round(daysDiff)} days. Minimum 90 days required for reliable trend analysis.`)
     }
   }
   
