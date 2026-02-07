@@ -127,7 +127,7 @@ function parseToISO(dateStr) {
   return null
 }
 
-function extractNumericValues(line) {
+function extractNumericValuesLegacy(line) {
   const values = []
   
   // Remove test name from beginning
@@ -202,7 +202,7 @@ export function hasTableStructure(text) {
 }
 
 
-function extractNumericValues(line) {
+function extractNumericValuesLegacy(line) {
   const values = []
   
   // Remove test name from beginning
