@@ -4,6 +4,7 @@
 import { calculateEGFR } from './calculateEGFR'
 
 // Gate 1: Check if eGFR calculation is allowed
+// CRITICAL FIX: eGFR presence is OPTIONAL - only creatinine needed
 export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
   const creatinineEntries = normalizedData.filter(e => e.test === 'creatinine')
   
@@ -19,11 +20,8 @@ export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
     reasons: []
   }
   
-  // CRITICAL FIX: Always calculate eGFR if creatinine exists
-  // Even if lab didn't report eGFR
-  
   if (creatinineEntries.length < 2) {
-    gates.reasons.push(`Only ${creatinineEntries.length} creatinine value(s) found. Minimum 2 required.`)
+    gates.reasons.push(`Need at least 2 creatinine values on different dates. Found: ${creatinineEntries.length}`)
   }
   
   if (uniqueDates.length < 2) {
@@ -31,11 +29,11 @@ export function canCalculateEGFR(normalizedData, patientAge, patientGender) {
   }
   
   if (!gates.age_provided) {
-    gates.reasons.push('Patient age required for eGFR calculation')
+    gates.reasons.push('Age not provided — cannot calculate eGFR')
   }
   
   if (!gates.gender_provided) {
-    gates.reasons.push('Patient gender required for eGFR calculation')
+    gates.reasons.push('Gender not provided — cannot calculate eGFR')
   }
   
   gates.passed = gates.min_creatinine_values && gates.unique_dates && 
@@ -90,17 +88,25 @@ export function canStageCKD(egfrData) {
     return gates
   }
   
-  // Count low eGFR readings (< 60)
-  gates.low_egfr_count = egfrData.filter(e => e.value < 60).length
+  // CRITICAL FIX: Only show CKD stage if eGFR < 90
+  const latestEGFR = egfrData[egfrData.length - 1].value
+  
+  if (latestEGFR >= 90) {
+    gates.reasons.push('Latest eGFR ≥ 90 mL/min/1.73m² - CKD staging not applicable')
+    return gates
+  }
+  
+  // Count low eGFR readings (< 90)
+  gates.low_egfr_count = egfrData.filter(e => e.value < 90).length
   gates.has_low_egfr = gates.low_egfr_count >= 2
   
   if (!gates.has_low_egfr) {
-    gates.reasons.push('CKD staging requires ≥2 eGFR readings below 60 mL/min/1.73m²')
+    gates.reasons.push('CKD staging requires ≥2 eGFR readings below 90 mL/min/1.73m²')
     return gates
   }
   
   // Check date span between low readings
-  const lowReadings = egfrData.filter(e => e.value < 60)
+  const lowReadings = egfrData.filter(e => e.value < 90)
   const dates = lowReadings.map(e => new Date(e.date)).sort((a, b) => a - b)
   const daysDiff = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24)
   gates.date_span_adequate = daysDiff >= 90
@@ -114,12 +120,18 @@ export function canStageCKD(egfrData) {
   return gates
 }
 
-// Determine CKD stage (only if gates pass)
+// Determine CKD stage (only if gates pass) - KDIGO G1-G5
 export function determineCKDStage(egfrData) {
   const latestEGFR = egfrData[egfrData.length - 1].value
   
+  // CRITICAL: Do NOT show stage if eGFR ≥ 90
+  if (latestEGFR >= 90) {
+    return { stage: null, reason: 'eGFR ≥ 90 mL/min/1.73m² - No CKD stage' }
+  }
+  
+  // KDIGO staging
   if (latestEGFR >= 60) {
-    return { stage: null, reason: 'Latest eGFR ≥ 60 mL/min/1.73m²' }
+    return { stage: 'G2', egfr_range: '60-89', description: 'Mildly decreased kidney function' }
   }
   
   if (latestEGFR >= 45) {

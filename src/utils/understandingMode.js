@@ -78,8 +78,8 @@ export function understandReport(extractedText) {
   
   understanding.detected_tests = Array.from(detectedTests.values())
   
-  // Detect dates
-  understanding.detected_dates = detectAllDates(extractedText)
+  // Detect dates with sanitization
+  understanding.detected_dates = detectAndSanitizeDates(extractedText)
   
   // Detect format
   if (extractedText.includes('|') || /\s{4,}/.test(extractedText)) {
@@ -120,9 +120,11 @@ export function understandReport(extractedText) {
   return understanding
 }
 
-function detectAllDates(text) {
+// DATE SANITIZATION - Critical for medical safety
+function detectAndSanitizeDates(text) {
   const dates = []
   const seen = new Set()
+  const discarded = []
   
   const patterns = [
     { pattern: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/g, type: 'slash' },
@@ -136,7 +138,24 @@ function detectAllDates(text) {
       const raw = match[0]
       const iso = parseToISO(raw)
       
-      if (iso && !seen.has(iso)) {
+      if (!iso) continue
+      
+      // CRITICAL: Sanitize dates - ignore DOB and old dates
+      const year = parseInt(iso.split('-')[0])
+      if (year < 1990) {
+        discarded.push({ raw, iso, reason: 'Year < 1990 (likely DOB or registration date)' })
+        continue
+      }
+      
+      // Ignore future dates
+      const dateObj = new Date(iso)
+      const now = new Date()
+      if (dateObj > now) {
+        discarded.push({ raw, iso, reason: 'Future date' })
+        continue
+      }
+      
+      if (!seen.has(iso)) {
         seen.add(iso)
         dates.push({
           raw: raw,
@@ -145,6 +164,11 @@ function detectAllDates(text) {
         })
       }
     }
+  }
+  
+  // Store discarded dates for debug transparency
+  if (discarded.length > 0) {
+    console.log('Discarded dates:', discarded)
   }
   
   return dates.sort((a, b) => a.iso_candidate.localeCompare(b.iso_candidate))
@@ -176,23 +200,24 @@ function parseToISO(dateStr) {
   return null
 }
 
-// Check if kidney analysis is possible
+// Check if kidney analysis is possible - FIXED LOGIC
 export function canAnalyzeKidneyFunction(understanding) {
   const hasCreatinine = understanding.detected_tests.some(t => 
     t.normalized_candidate === 'creatinine'
   )
-  const hasEGFR = understanding.detected_tests.some(t => 
-    t.normalized_candidate === 'egfr'
-  )
-  const hasDates = understanding.detected_dates.length >= 2
+  
+  // CRITICAL FIX: eGFR presence is OPTIONAL, not required
+  // Only creatinine + dates needed
+  const hasValidDates = understanding.detected_dates.length >= 2
   
   return {
-    possible: (hasCreatinine || hasEGFR) && hasDates,
+    possible: hasCreatinine && hasValidDates,
     reasons: {
-      has_kidney_markers: hasCreatinine || hasEGFR,
-      has_multiple_dates: hasDates,
+      has_kidney_markers: hasCreatinine,
+      has_multiple_dates: hasValidDates,
       min_dates_required: 2,
-      actual_dates: understanding.detected_dates.length
+      actual_dates: understanding.detected_dates.length,
+      note: 'eGFR will be calculated from creatinine if not present in report'
     }
   }
 }
