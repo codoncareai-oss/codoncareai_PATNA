@@ -5,90 +5,76 @@ import Disclaimer from '../components/Disclaimer'
 import EGFRChart from '../components/EGFRChart'
 import MarkerCard from '../components/MarkerCard'
 import TrendBadge from '../components/TrendBadge'
-import { 
-  canCalculateEGFR, 
-  calculateEGFRForNormalizedData,
-  canStageCKD,
-  determineCKDStage,
-  canLabelTrend,
-  calculateTrend
-} from '../utils/clinicalLogicMode'
+import { calculateEGFRFromCreatinine, determineCKDStage, calculateTrend } from '../utils/clinicalAnalyzer'
 
 export default function Results() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [normalizedData, setNormalizedData] = useState([])
-  const [egfrData, setEgfrData] = useState([])
+  const [dataPoints, setDataPoints] = useState([])
+  const [capabilities, setCapabilities] = useState({})
   const [patientInfo, setPatientInfo] = useState({})
+  const [egfrData, setEgfrData] = useState([])
   const [ckdStage, setCkdStage] = useState(null)
   const [trend, setTrend] = useState(null)
-  const [gates, setGates] = useState({})
   const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => {
-    // Check if coming from Understanding Summary with confirmation
     if (!location.state?.confirmed) {
       navigate('/upload')
       return
     }
 
-    const normalized = location.state.normalizedData || JSON.parse(sessionStorage.getItem('normalizedData') || '[]')
+    const points = JSON.parse(sessionStorage.getItem('clinicalDataPoints') || '[]')
+    const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}')
     const info = JSON.parse(sessionStorage.getItem('patientInfo') || '{}')
     
-    if (normalized.length === 0 || !info.birthYear) {
+    if (points.length === 0 || !info.birthYear) {
       navigate('/upload')
       return
     }
 
-    setNormalizedData(normalized)
+    setDataPoints(points)
+    setCapabilities(caps)
     setPatientInfo(info)
     
-    // LAYER 3: CLINICAL LOGIC MODE - Apply strict gates
-    
-    // Gate 1: eGFR Calculation
-    const egfrGate = canCalculateEGFR(normalized, new Date().getFullYear() - info.birthYear, info.gender)
-    
-    let calculatedEgfr = []
-    if (egfrGate.passed) {
-      calculatedEgfr = calculateEGFRForNormalizedData(normalized, info.birthYear, info.gender)
+    // Calculate eGFR if possible
+    if (caps.can_calculate_egfr) {
+      const creatininePoints = points.filter(p => p.canonical_test_key === 'creatinine')
+      const calculatedEgfr = calculateEGFRFromCreatinine(creatininePoints, info.birthYear, info.gender)
+      
+      // Combine with reported eGFR
+      const reportedEgfr = points.filter(p => p.canonical_test_key === 'egfr')
+      const allEgfr = [...reportedEgfr, ...calculatedEgfr].sort((a, b) => a.date_iso.localeCompare(b.date_iso))
+      setEgfrData(allEgfr)
+      
+      // Determine CKD stage
+      if (caps.can_stage_ckd && allEgfr.length > 0) {
+        const latest = allEgfr[allEgfr.length - 1]
+        const stage = determineCKDStage(latest.value)
+        setCkdStage(stage)
+      }
+      
+      // Calculate trend
+      if (caps.can_show_trend && allEgfr.length >= 2) {
+        const trendResult = calculateTrend(allEgfr)
+        setTrend(trendResult)
+      }
     }
-    
-    // Combine reported and calculated eGFR
-    const reportedEgfr = normalized.filter(e => e.test === 'egfr')
-    const allEgfr = [...reportedEgfr, ...calculatedEgfr].sort((a, b) => a.date.localeCompare(b.date))
-    setEgfrData(allEgfr)
-    
-    // Gate 2: CKD Staging
-    const ckdGate = canStageCKD(allEgfr)
-    if (ckdGate.passed) {
-      const stage = determineCKDStage(allEgfr)
-      setCkdStage(stage)
-    }
-    
-    // Gate 3: Trend Labeling
-    const trendGate = canLabelTrend(allEgfr)
-    if (trendGate.passed) {
-      const trendResult = calculateTrend(allEgfr)
-      setTrend(trendResult)
-    } else {
-      setTrend({ slope: 0, label: 'Insufficient data to classify trend', confidence: 'none' })
-    }
-    
-    setGates({ egfrGate, ckdGate, trendGate })
   }, [navigate, location])
 
-  if (normalizedData.length === 0) return null
+  if (dataPoints.length === 0) return null
 
   const chartData = egfrData.map(e => ({
-    date: e.date,
+    date: e.date_iso,
     egfr: e.value,
     calculated: e.source === 'calculated'
   }))
 
   const latestValues = {}
-  for (const entry of normalizedData) {
-    if (!latestValues[entry.test] || entry.date > latestValues[entry.test].date) {
-      latestValues[entry.test] = entry
+  for (const point of dataPoints) {
+    const key = point.canonical_test_key
+    if (!latestValues[key] || point.date_iso > latestValues[key].date_iso) {
+      latestValues[key] = point
     }
   }
 
@@ -97,304 +83,122 @@ export default function Results() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <Disclaimer />
         
-        {/* Header */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-xl shadow-lg p-6 mb-6"
+          className="mb-8"
         >
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">Clinical Analysis Results</h1>
-          <div className="flex items-center space-x-6 text-gray-600 mb-4">
-            <div>
-              <span className="font-medium">Birth Year:</span> {patientInfo.birthYear}
-            </div>
-            <div>
-              <span className="font-medium">Gender:</span> {patientInfo.gender}
-            </div>
-            <div>
-              <span className="font-medium">eGFR Data Points:</span> {egfrData.length}
-            </div>
-          </div>
-          
-          {trend && (
-            <div className="mt-4">
-              <TrendBadge status={trend.label} />
-            </div>
-          )}
-          
-          {/* Gate Status Indicators */}
-          <div className="mt-4 space-y-2">
-            {gates.egfrGate && !gates.egfrGate.passed && (
-              <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3">
-                <p className="text-sm text-yellow-800">
-                  <strong>eGFR Calculation Gate:</strong> {gates.egfrGate.reasons.join(', ')}
-                </p>
-              </div>
-            )}
-            
-            {gates.ckdGate && !gates.ckdGate.passed && (
-              <div className="bg-blue-50 border-l-4 border-blue-500 p-3">
-                <p className="text-sm text-blue-800">
-                  <strong>CKD Staging Gate:</strong> {gates.ckdGate.reasons.join(', ')}
-                </p>
-              </div>
-            )}
-            
-            {gates.trendGate && !gates.trendGate.passed && (
-              <div className="bg-blue-50 border-l-4 border-blue-500 p-3">
-                <p className="text-sm text-blue-800">
-                  <strong>Trend Classification Gate:</strong> {gates.trendGate.reasons.join(', ')}
-                </p>
-              </div>
-            )}
-          </div>
-          
-          {/* CKD Stage */}
-          {ckdStage && ckdStage.stage && (
-            <div className="mt-4 bg-orange-50 border-l-4 border-orange-500 p-3">
-              <p className="text-sm text-orange-800">
-                <strong>CKD Stage:</strong> {ckdStage.stage} - {ckdStage.description} (eGFR {ckdStage.egfr_range} mL/min/1.73m²)
-              </p>
-              <p className="text-xs text-orange-700 mt-1">
-                Based on trend data only. Consult your healthcare provider for clinical diagnosis.
-              </p>
-            </div>
-          )}
-          
-          {egfrData.some(e => e.source === 'calculated') && (
-            <div className="mt-4 bg-blue-50 border-l-4 border-blue-500 p-3">
-              <p className="text-sm text-blue-800">
-                ℹ️ Some eGFR values were calculated from creatinine using CKD-EPI 2021 equation (age-adjusted per test date).
-              </p>
-            </div>
-          )}
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Kidney Function Analysis</h1>
+          <p className="text-gray-600">
+            Patient: {patientInfo.gender === 'male' ? 'Male' : 'Female'}, Born {patientInfo.birthYear}
+          </p>
         </motion.div>
 
-        {/* Main Chart */}
-        {chartData.length >= 2 ? (
-          <EGFRChart data={chartData} />
-        ) : (
-          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">eGFR Trend Visualization</h3>
-            <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4">
-              <p className="text-sm text-yellow-800 font-medium mb-2">
-                Graph cannot be rendered
-              </p>
-              <p className="text-sm text-yellow-700">
-                {egfrData.length === 0 && 'No eGFR data points available.'}
-                {egfrData.length === 1 && 'Only one eGFR data point available. Minimum 2 time points required for trend visualization.'}
-              </p>
-              {gates.egfrGate && !gates.egfrGate.passed && (
-                <div className="mt-3 text-sm text-yellow-700">
-                  <p className="font-medium">Reasons:</p>
-                  <ul className="list-disc list-inside ml-2 mt-1">
-                    {gates.egfrGate.reasons.map((reason, i) => (
-                      <li key={i}>{reason}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+        {/* eGFR Chart */}
+        {capabilities.can_show_graph && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="bg-white rounded-xl shadow-lg p-6 mb-8"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-gray-900">eGFR Trend</h2>
+              {trend && <TrendBadge trend={trend.label} confidence={trend.confidence} />}
             </div>
-            
-            {/* Show detected biomarkers even if analysis blocked */}
-            {normalizedData.length > 0 && (
-              <div className="mt-4 p-4 bg-blue-50 rounded">
-                <p className="text-sm text-blue-800 font-medium mb-2">Detected Biomarkers:</p>
-                <div className="grid grid-cols-2 gap-2 text-sm text-blue-700">
-                  {[...new Set(normalizedData.map(d => d.display_name))].map((name, i) => (
-                    <div key={i}>• {name}</div>
-                  ))}
-                </div>
-              </div>
+            <EGFRChart data={chartData} />
+            {egfrData.some(e => e.source === 'calculated') && (
+              <p className="text-sm text-gray-500 mt-4">
+                * Calculated values derived from creatinine using CKD-EPI 2021 formula
+              </p>
             )}
-          </div>
+          </motion.div>
         )}
 
-        {/* Supporting Markers */}
-        <div className="grid md:grid-cols-3 gap-6 mt-6">
-          {latestValues.creatinine && (
-            <MarkerCard
-              title={latestValues.creatinine.display_name}
-              value={latestValues.creatinine.value.toFixed(2)}
-              unit={latestValues.creatinine.unit}
-              data={normalizedData.filter(e => e.test === 'creatinine').map(e => ({ value: e.value }))}
-              trend="stable"
-            />
-          )}
-          {latestValues.hemoglobin && (
-            <MarkerCard
-              title={latestValues.hemoglobin.display_name}
-              value={latestValues.hemoglobin.value.toFixed(1)}
-              unit={latestValues.hemoglobin.unit}
-              data={normalizedData.filter(e => e.test === 'hemoglobin').map(e => ({ value: e.value }))}
-              trend="stable"
-            />
-          )}
-          {latestValues.pth && (
-            <MarkerCard
-              title={latestValues.pth.display_name}
-              value={latestValues.pth.value.toFixed(1)}
-              unit={latestValues.pth.unit}
-              data={normalizedData.filter(e => e.test === 'pth').map(e => ({ value: e.value }))}
-              trend="stable"
-            />
-          )}
-        </div>
+        {/* CKD Stage */}
+        {ckdStage ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white rounded-xl shadow-lg p-6 mb-8"
+          >
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">CKD Stage</h2>
+            <div className="flex items-center space-x-4">
+              <div className={`text-4xl font-bold ${
+                ckdStage.stage === 'G2' ? 'text-yellow-600' :
+                ckdStage.stage === 'G3a' || ckdStage.stage === 'G3b' ? 'text-orange-600' :
+                'text-red-600'
+              }`}>
+                {ckdStage.stage}
+              </div>
+              <div>
+                <div className="text-lg font-semibold text-gray-900">{ckdStage.description}</div>
+                <div className="text-sm text-gray-600">eGFR: {ckdStage.egfr_range}</div>
+              </div>
+            </div>
+          </motion.div>
+        ) : capabilities.can_stage_ckd === false && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-green-50 border-l-4 border-green-500 p-6 mb-8"
+          >
+            <h2 className="text-xl font-bold text-green-900 mb-2">No CKD Detected</h2>
+            <p className="text-green-800">
+              Latest eGFR is ≥90 mL/min/1.73m², indicating normal or high kidney function.
+            </p>
+          </motion.div>
+        )}
 
-        {/* Clinical Interpretation */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
-          className="bg-blue-50 rounded-xl p-6 mt-6 border-l-4 border-blue-500"
+        {/* Latest Values */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white rounded-xl shadow-lg p-6 mb-8"
         >
-          <h3 className="text-xl font-semibold text-gray-900 mb-3">Clinical Interpretation</h3>
-          <div className="space-y-2 text-gray-700">
-            {trend && egfrData.length >= 2 ? (
-              <>
-                <p>
-                  <strong>eGFR Slope:</strong> {trend.slope > 0 ? '+' : ''}{trend.slope} mL/min/1.73m² per year
-                </p>
-                <p>
-                  <strong>Trend Classification:</strong> {trend.label}
-                </p>
-                <p>
-                  <strong>Confidence:</strong> {trend.confidence}
-                </p>
-                <p className="text-sm mt-4 text-gray-600">
-                  This analysis shows trends based on normalized data from your uploaded reports.
-                  {trend.label === 'Progressive decline' && ' A declining eGFR trend warrants discussion with your nephrologist or primary care provider.'}
-                  {' '}This is NOT a diagnosis.
-                </p>
-              </>
-            ) : (
-              <p className="text-gray-600">
-                {gates.trendGate?.reasons?.[0] || 'Insufficient data for trend interpretation.'}
-              </p>
-            )}
-          </div>
-        </motion.div>
-
-        {/* Data Table */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="mt-6 bg-gray-50 rounded-xl p-6 border border-gray-200"
-        >
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Normalized Data Table</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-4 py-2 text-left">Date</th>
-                  <th className="px-4 py-2 text-left">Test</th>
-                  <th className="px-4 py-2 text-left">Value</th>
-                  <th className="px-4 py-2 text-left">Unit</th>
-                  <th className="px-4 py-2 text-left">Source</th>
-                  <th className="px-4 py-2 text-left">Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...normalizedData, ...egfrData.filter(e => e.source === 'calculated')]
-                  .sort((a, b) => a.date.localeCompare(b.date))
-                  .map((entry, i) => (
-                    <tr key={i} className="border-t">
-                      <td className="px-4 py-2">{entry.date}</td>
-                      <td className="px-4 py-2">{entry.display_name}</td>
-                      <td className="px-4 py-2">{entry.value.toFixed(2)}</td>
-                      <td className="px-4 py-2">{entry.unit}</td>
-                      <td className="px-4 py-2">
-                        <span className={`text-xs px-2 py-1 rounded ${
-                          entry.source === 'calculated' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                        }`}>
-                          {entry.source}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2">{(entry.confidence * 100).toFixed(0)}%</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Latest Values</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.entries(latestValues).map(([key, point]) => (
+              <MarkerCard
+                key={key}
+                name={point.test_name}
+                value={point.value}
+                unit={point.unit}
+                date={point.date_iso}
+              />
+            ))}
           </div>
         </motion.div>
 
         {/* Debug Panel */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="mt-6 bg-gray-50 rounded-xl p-6 border border-gray-200"
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-white rounded-xl shadow-lg p-6"
         >
           <button
             onClick={() => setShowDebug(!showDebug)}
-            className="text-sm text-gray-600 hover:text-gray-900 font-medium flex items-center"
+            className="text-sm text-gray-600 hover:text-gray-900 font-medium"
           >
-            {showDebug ? '▼' : '▶'} Why analysis passed / failed (Debug Transparency)
+            {showDebug ? '▼' : '▶'} Debug Information
           </button>
+          
           {showDebug && (
             <div className="mt-4 space-y-4">
-              {/* Detected Creatinine Values */}
-              <div className="bg-white p-4 rounded border border-gray-300">
-                <h4 className="font-semibold text-gray-900 mb-2">Detected Creatinine Values</h4>
-                {normalizedData.filter(d => d.test === 'creatinine').length > 0 ? (
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-2 py-1 text-left">Date</th>
-                        <th className="px-2 py-1 text-left">Value</th>
-                        <th className="px-2 py-1 text-left">Unit</th>
-                        <th className="px-2 py-1 text-left">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {normalizedData.filter(d => d.test === 'creatinine').map((d, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="px-2 py-1">{d.date}</td>
-                          <td className="px-2 py-1">{d.value.toFixed(2)}</td>
-                          <td className="px-2 py-1">{d.unit}</td>
-                          <td className="px-2 py-1 text-xs">{d.source}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <p className="text-sm text-gray-600">No creatinine values detected</p>
-                )}
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-2">Capabilities</h3>
+                <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto">
+                  {JSON.stringify(capabilities, null, 2)}
+                </pre>
               </div>
-              
-              {/* eGFR Calculation Status */}
-              <div className="bg-white p-4 rounded border border-gray-300">
-                <h4 className="font-semibold text-gray-900 mb-2">eGFR Calculation Status</h4>
-                {egfrData.length > 0 ? (
-                  <div className="space-y-2 text-sm">
-                    <p className="text-green-700">
-                      ✓ eGFR calculated for {egfrData.filter(e => e.source === 'calculated').length} time point(s)
-                    </p>
-                    <p className="text-gray-600">
-                      Total eGFR values: {egfrData.length} ({egfrData.filter(e => e.source === 'calculated').length} calculated, {egfrData.filter(e => e.source !== 'calculated').length} reported)
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 text-sm">
-                    <p className="text-red-700">✗ No eGFR values available</p>
-                    {gates.egfrGate && (
-                      <div className="text-gray-600">
-                        <p className="font-medium">Reasons:</p>
-                        <ul className="list-disc list-inside ml-2">
-                          {gates.egfrGate.reasons.map((r, i) => (
-                            <li key={i}>{r}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* Gate Status */}
-              <div className="bg-white p-4 rounded border border-gray-300">
-                <h4 className="font-semibold text-gray-900 mb-2">Clinical Logic Gates</h4>
-                <pre className="text-xs text-gray-700 overflow-auto">
-                  {JSON.stringify({ gates, trend, ckdStage }, null, 2)}
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-2">Data Points ({dataPoints.length})</h3>
+                <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto max-h-96">
+                  {JSON.stringify(dataPoints, null, 2)}
                 </pre>
               </div>
             </div>
@@ -402,16 +206,16 @@ export default function Results() {
         </motion.div>
 
         {/* Actions */}
-        <div className="mt-6 flex justify-center space-x-4">
+        <div className="mt-8 flex space-x-4">
           <button
             onClick={() => navigate('/upload')}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition"
           >
-            Upload More Reports
+            Analyze Another Report
           </button>
           <button
             onClick={() => navigate('/')}
-            className="bg-white text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-50 transition border-2 border-blue-600"
+            className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition"
           >
             Back to Home
           </button>

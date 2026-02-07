@@ -2,11 +2,10 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
-import { parseCSV, hasMultiplePatients } from '../utils/parseCSV'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
-import { understandReport, canAnalyzeKidneyFunction } from '../utils/understandingMode'
-import { normalizeLabData, validateForClinicalAnalysis } from '../utils/normalizationMode'
+import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
+import { analyzeCapabilities } from '../utils/clinicalAnalyzer'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -63,11 +62,11 @@ export default function Upload() {
     setProcessing(true)
     setProcessingStatus('Processing files...')
     
+    const allDataPoints = []
     let allExtractedText = ''
-    const allUnderstandings = []
 
     try {
-      // LAYER 1: UNDERSTANDING MODE - Extract and detect without interpretation
+      // Process each file
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
@@ -99,75 +98,32 @@ export default function Upload() {
         }
         
         if (extractedText) {
-          // LAYER 1: Understand the report
-          const understanding = understandReport(extractedText)
-          understanding.sourceFile = file.name
-          allUnderstandings.push(understanding)
+          // Extract clinical data points
+          const dataPoints = extractClinicalDataPoints(extractedText, file.name, 1)
+          allDataPoints.push(...dataPoints)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
 
-      if (allUnderstandings.length === 0) {
+      if (allDataPoints.length === 0) {
         setProcessing(false)
-        navigate('/understanding', {
-          state: {
-            understanding: {
-              detected_tests: [],
-              detected_dates: [],
-              format: 'unknown',
-              tables_detected: false,
-              extraction_confidence: 'low',
-              source_hints: []
-            },
-            normalizedData: [],
-            validation: {
-              can_proceed: false,
-              reasons: {
-                has_kidney_markers: false,
-                has_multiple_dates: false,
-                min_dates_required: 2,
-                actual_dates: 0
-              }
-            }
-          }
-        })
+        alert('No clinical data could be extracted from the uploaded files.')
         return
       }
 
-      // Merge all understandings
-      const mergedUnderstanding = mergeUnderstandings(allUnderstandings)
+      // Analyze capabilities
+      const capabilities = analyzeCapabilities(allDataPoints, year, gender)
       
-      // Check if kidney analysis is possible
-      const analysisCheck = canAnalyzeKidneyFunction(mergedUnderstanding)
-      
-      // LAYER 2: NORMALIZATION MODE - Convert to canonical format
-      setProcessingStatus('Normalizing data...')
-      let allNormalizedData = []
-      
-      for (const understanding of allUnderstandings) {
-        const fileText = allExtractedText.split(`=== ${understanding.sourceFile} ===`)[1]?.split('===')[0] || ''
-        const normalized = normalizeLabData(fileText, understanding)
-        allNormalizedData.push(...normalized)
-      }
-      
-      // Validate for clinical analysis
-      const validation = validateForClinicalAnalysis(allNormalizedData)
-      
-      // Store data and navigate to Understanding Summary
-      sessionStorage.setItem('understanding', JSON.stringify(mergedUnderstanding))
-      sessionStorage.setItem('normalizedData', JSON.stringify(allNormalizedData))
-      sessionStorage.setItem('extractedText', allExtractedText)
+      // Store and navigate
+      sessionStorage.setItem('clinicalDataPoints', JSON.stringify(allDataPoints))
+      sessionStorage.setItem('capabilities', JSON.stringify(capabilities))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
+      sessionStorage.setItem('extractedText', allExtractedText)
       
       navigate('/understanding', {
         state: {
-          understanding: mergedUnderstanding,
-          normalizedData: allNormalizedData,
-          validation: {
-            can_proceed: analysisCheck.possible && validation.can_proceed,
-            ...analysisCheck.reasons,
-            ...validation
-          }
+          dataPoints: allDataPoints,
+          capabilities: capabilities
         }
       })
       
@@ -178,51 +134,6 @@ export default function Upload() {
     } finally {
       setProcessing(false)
     }
-  }
-
-  function mergeUnderstandings(understandings) {
-    const merged = {
-      detected_tests: [],
-      detected_dates: [],
-      format: 'mixed',
-      tables_detected: false,
-      extraction_confidence: 'medium',
-      source_hints: []
-    }
-    
-    const testMap = new Map()
-    const dateSet = new Set()
-    const sourceSet = new Set()
-    
-    for (const u of understandings) {
-      // Merge tests
-      for (const test of u.detected_tests) {
-        if (testMap.has(test.normalized_candidate)) {
-          const existing = testMap.get(test.normalized_candidate)
-          existing.count += test.count
-        } else {
-          testMap.set(test.normalized_candidate, { ...test })
-        }
-      }
-      
-      // Merge dates
-      for (const date of u.detected_dates) {
-        dateSet.add(JSON.stringify(date))
-      }
-      
-      // Merge sources
-      for (const source of u.source_hints) {
-        sourceSet.add(source)
-      }
-      
-      if (u.tables_detected) merged.tables_detected = true
-    }
-    
-    merged.detected_tests = Array.from(testMap.values())
-    merged.detected_dates = Array.from(dateSet).map(d => JSON.parse(d))
-    merged.source_hints = Array.from(sourceSet)
-    
-    return merged
   }
 
   return (
