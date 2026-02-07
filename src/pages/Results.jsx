@@ -19,6 +19,7 @@ export default function Results() {
   const [ckdStage, setCkdStage] = useState(null)
   const [extractedText, setExtractedText] = useState('')
   const [debugInfo, setDebugInfo] = useState('')
+  const [tableDebugInfo, setTableDebugInfo] = useState('')
   const [showDebug, setShowDebug] = useState(false)
   const [showDataTable, setShowDataTable] = useState(false)
 
@@ -27,6 +28,7 @@ export default function Results() {
     const info = sessionStorage.getItem('patientInfo')
     const text = sessionStorage.getItem('extractedText')
     const reports = sessionStorage.getItem('extractedReports')
+    const tableDebug = sessionStorage.getItem('tableDebugInfo')
     
     if (!timelineData || !info) {
       navigate('/upload')
@@ -40,6 +42,7 @@ export default function Results() {
     setTimeline(parsedTimeline)
     setPatientInfo(parsedInfo)
     setExtractedText(text || '')
+    setTableDebugInfo(tableDebug || '')
     
     // Calculate trend metrics
     if (parsedTimeline.egfr.length >= 2) {
@@ -280,6 +283,12 @@ export default function Results() {
             </button>
             {showDebug && (
               <pre className="mt-4 text-xs text-gray-700 bg-white p-4 rounded border border-gray-300 overflow-auto max-h-96">
+                {tableDebugInfo && (
+                  <>
+                    {tableDebugInfo}
+                    {'\n\n'}
+                  </>
+                )}
                 {debugInfo}
                 {extractedText && (
                   <>

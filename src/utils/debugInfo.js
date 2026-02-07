@@ -2,38 +2,25 @@
 export function generateDebugInfo(extractedReports, timeline) {
   const debug = {
     totalReports: extractedReports.length,
-    extractedDates: [],
-    extractedMarkers: {},
-    discardedValues: [],
+    extractedDataPoints: [],
+    discardedReports: [],
     timelineStats: {}
   }
   
-  // Collect all extracted dates
+  // Collect all extracted data points
   for (const report of extractedReports) {
-    if (report.primaryDate) {
-      debug.extractedDates.push({
+    if (report.dataPoints && report.dataPoints.length > 0) {
+      debug.extractedDataPoints.push({
         file: report.sourceFile,
-        date: report.primaryDate,
-        allDates: report.data.dates
+        points: report.dataPoints.length,
+        dates: [...new Set(report.dataPoints.map(p => p.date))],
+        markers: [...new Set(report.dataPoints.map(p => p.marker))]
       })
     } else {
-      debug.discardedValues.push({
+      debug.discardedReports.push({
         file: report.sourceFile,
-        reason: 'No valid date found'
+        reason: 'No valid data points extracted'
       })
-    }
-  }
-  
-  // Marker extraction summary
-  for (const report of extractedReports) {
-    for (const [marker, value] of Object.entries(report.data)) {
-      if (marker === 'dates') continue
-      if (value !== null) {
-        if (!debug.extractedMarkers[marker]) {
-          debug.extractedMarkers[marker] = 0
-        }
-        debug.extractedMarkers[marker]++
-      }
     }
   }
   
@@ -57,24 +44,17 @@ export function formatDebugPanel(debug) {
   
   output += `Total Reports Processed: ${debug.totalReports}\n\n`
   
-  output += '--- Extracted Dates ---\n'
-  for (const item of debug.extractedDates) {
-    output += `${item.file}: ${item.date}\n`
-    if (item.allDates.length > 1) {
-      output += `  (Multiple dates found: ${item.allDates.join(', ')})\n`
-    }
+  output += '--- Extracted Data Points ---\n'
+  for (const item of debug.extractedDataPoints) {
+    output += `${item.file}:\n`
+    output += `  Data points: ${item.points}\n`
+    output += `  Dates: ${item.dates.join(', ')}\n`
+    output += `  Markers: ${item.markers.join(', ')}\n\n`
   }
-  output += '\n'
   
-  output += '--- Extracted Markers ---\n'
-  for (const [marker, count] of Object.entries(debug.extractedMarkers)) {
-    output += `${marker}: ${count} values\n`
-  }
-  output += '\n'
-  
-  if (debug.discardedValues.length > 0) {
+  if (debug.discardedReports.length > 0) {
     output += '--- Discarded Reports ---\n'
-    for (const item of debug.discardedValues) {
+    for (const item of debug.discardedReports) {
       output += `${item.file}: ${item.reason}\n`
     }
     output += '\n'

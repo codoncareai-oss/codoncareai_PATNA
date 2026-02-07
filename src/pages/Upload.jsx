@@ -6,6 +6,7 @@ import { parseCSV } from '../utils/parseCSV'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
 import { parseMedicalData, calculateConfidence, determinePrimaryDate } from '../utils/medicalParser'
+import { detectTableStructure, parseTableData, hasKidneyMarkers, generateTableDebugInfo } from '../utils/tableParser'
 import { buildMasterTimeline } from '../utils/dateValueMapper'
 
 export default function Upload() {
@@ -65,6 +66,7 @@ export default function Upload() {
     
     const extractedReports = []
     let allExtractedText = ''
+    let allTableDebugInfo = ''
 
     try {
       // Process each file
@@ -73,7 +75,7 @@ export default function Upload() {
         setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
         
         let extractedText = ''
-        let parsedData = null
+        let dataPoints = []
         
         // CSV - direct parsing
         if (file.name.endsWith('.csv')) {
@@ -81,23 +83,35 @@ export default function Upload() {
           const text = await file.text()
           const parsed = parseCSV(text)
           
-          // Each CSV row is a separate report
+          // Each CSV row is a separate data point
           for (const row of parsed) {
             if (row.date) {
-              extractedReports.push({
-                sourceFile: file.name,
-                primaryDate: row.date,
-                data: {
-                  creatinine: row.creatinine ? parseFloat(row.creatinine) : null,
-                  egfr: row.egfr ? parseFloat(row.egfr) : null,
-                  hemoglobin: row.hemoglobin ? parseFloat(row.hemoglobin) : null,
-                  pth: row.pth ? parseFloat(row.pth) : null,
-                  phosphorus: row.phosphorus ? parseFloat(row.phosphorus) : null,
-                  bicarbonate: row.bicarbonate ? parseFloat(row.bicarbonate) : null,
-                  dates: [row.date]
-                }
-              })
+              if (row.creatinine) {
+                dataPoints.push({ marker: 'creatinine', value: parseFloat(row.creatinine), date: row.date })
+              }
+              if (row.egfr) {
+                dataPoints.push({ marker: 'egfr', value: parseFloat(row.egfr), date: row.date })
+              }
+              if (row.hemoglobin) {
+                dataPoints.push({ marker: 'hemoglobin', value: parseFloat(row.hemoglobin), date: row.date })
+              }
+              if (row.pth) {
+                dataPoints.push({ marker: 'pth', value: parseFloat(row.pth), date: row.date })
+              }
+              if (row.phosphorus) {
+                dataPoints.push({ marker: 'phosphorus', value: parseFloat(row.phosphorus), date: row.date })
+              }
+              if (row.bicarbonate) {
+                dataPoints.push({ marker: 'bicarbonate', value: parseFloat(row.bicarbonate), date: row.date })
+              }
             }
+          }
+          
+          if (dataPoints.length > 0) {
+            extractedReports.push({
+              sourceFile: file.name,
+              dataPoints: dataPoints
+            })
           }
         } 
         // PDF - extract text
@@ -110,14 +124,38 @@ export default function Upload() {
             continue
           }
           
-          parsedData = parseMedicalData(extractedText)
-          const primaryDate = determinePrimaryDate(parsedData.dates)
+          // Try table detection first
+          const tables = detectTableStructure(extractedText)
+          allTableDebugInfo += generateTableDebugInfo(tables)
           
-          if (primaryDate) {
+          if (tables.length > 0) {
+            // Parse table data
+            for (const table of tables) {
+              const tableData = parseTableData(table, extractedText)
+              dataPoints.push(...tableData)
+            }
+          }
+          
+          // Fallback to single-date parsing if no tables or no data
+          if (dataPoints.length === 0) {
+            const parsedData = parseMedicalData(extractedText)
+            const primaryDate = determinePrimaryDate(parsedData.dates)
+            
+            if (primaryDate) {
+              // Convert to data points
+              for (const [marker, value] of Object.entries(parsedData)) {
+                if (marker !== 'dates' && value !== null) {
+                  dataPoints.push({ marker, value, date: primaryDate })
+                }
+              }
+            }
+          }
+          
+          // Check if kidney-relevant
+          if (dataPoints.length > 0 || hasKidneyMarkers(extractedText)) {
             extractedReports.push({
               sourceFile: file.name,
-              primaryDate: primaryDate,
-              data: parsedData
+              dataPoints: dataPoints
             })
             allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
           }
@@ -133,14 +171,36 @@ export default function Upload() {
           }
           
           extractedText = ocrResult.text
-          parsedData = parseMedicalData(extractedText)
-          const primaryDate = determinePrimaryDate(parsedData.dates)
           
-          if (primaryDate) {
+          // Try table detection first
+          const tables = detectTableStructure(extractedText)
+          allTableDebugInfo += generateTableDebugInfo(tables)
+          
+          if (tables.length > 0) {
+            for (const table of tables) {
+              const tableData = parseTableData(table, extractedText)
+              dataPoints.push(...tableData)
+            }
+          }
+          
+          // Fallback to single-date parsing
+          if (dataPoints.length === 0) {
+            const parsedData = parseMedicalData(extractedText)
+            const primaryDate = determinePrimaryDate(parsedData.dates)
+            
+            if (primaryDate) {
+              for (const [marker, value] of Object.entries(parsedData)) {
+                if (marker !== 'dates' && value !== null) {
+                  dataPoints.push({ marker, value, date: primaryDate })
+                }
+              }
+            }
+          }
+          
+          if (dataPoints.length > 0 || hasKidneyMarkers(extractedText)) {
             extractedReports.push({
               sourceFile: file.name,
-              primaryDate: primaryDate,
-              data: parsedData
+              dataPoints: dataPoints
             })
             allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
           }
@@ -170,6 +230,7 @@ export default function Upload() {
       sessionStorage.setItem('extractedReports', JSON.stringify(extractedReports))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
       sessionStorage.setItem('extractedText', allExtractedText)
+      sessionStorage.setItem('tableDebugInfo', allTableDebugInfo)
       
       navigate('/results')
     } catch (error) {

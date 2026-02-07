@@ -1,4 +1,5 @@
 import { calculateEGFR } from './calculateEGFR'
+import { detectTableStructure, parseTableData, hasKidneyMarkers, generateTableDebugInfo } from './tableParser'
 
 // Build master longitudinal timeline from multiple reports
 export function buildMasterTimeline(extractedReports, patientBirthYear, patientGender) {
@@ -16,37 +17,47 @@ export function buildMasterTimeline(extractedReports, patientBirthYear, patientG
   }
   
   for (const report of extractedReports) {
-    const { data, sourceFile, primaryDate } = report
+    const { dataPoints, sourceFile } = report
     
-    if (!primaryDate) continue
+    if (!dataPoints || dataPoints.length === 0) continue
     
-    // Add each marker to timeline
-    for (const [marker, value] of Object.entries(data)) {
-      if (marker === 'dates') continue
-      if (value === null) continue
+    // Add each data point to timeline
+    for (const point of dataPoints) {
+      const { marker, value, date } = point
       
-      timeline[marker].push({
-        date: primaryDate,
-        value: value,
-        sourceFile: sourceFile,
-        type: 'reported'
-      })
+      if (!date || value === null) continue
+      
+      if (timeline[marker]) {
+        timeline[marker].push({
+          date: date,
+          value: value,
+          sourceFile: sourceFile,
+          type: 'reported'
+        })
+      }
     }
     
-    // Calculate eGFR if missing but creatinine exists
-    if (!data.egfr && data.creatinine && patientBirthYear && patientGender) {
-      const testYear = new Date(primaryDate).getFullYear()
-      const ageAtTest = testYear - patientBirthYear
+    // Calculate eGFR for each creatinine value if missing
+    for (const creatPoint of dataPoints.filter(p => p.marker === 'creatinine')) {
+      const { date, value } = creatPoint
       
-      if (ageAtTest > 0 && ageAtTest < 120) {
-        const calculatedEGFR = calculateEGFR(data.creatinine, ageAtTest, patientGender)
+      // Check if eGFR already exists for this date
+      const hasEGFR = dataPoints.some(p => p.marker === 'egfr' && p.date === date)
+      
+      if (!hasEGFR && patientBirthYear && patientGender) {
+        const testYear = new Date(date).getFullYear()
+        const ageAtTest = testYear - patientBirthYear
         
-        timeline.egfr.push({
-          date: primaryDate,
-          value: calculatedEGFR,
-          sourceFile: sourceFile,
-          type: 'calculated'
-        })
+        if (ageAtTest > 0 && ageAtTest < 120) {
+          const calculatedEGFR = calculateEGFR(value, ageAtTest, patientGender)
+          
+          timeline.egfr.push({
+            date: date,
+            value: calculatedEGFR,
+            sourceFile: sourceFile,
+            type: 'calculated'
+          })
+        }
       }
     }
   }
