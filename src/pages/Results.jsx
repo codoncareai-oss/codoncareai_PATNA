@@ -257,6 +257,14 @@ CKD Stage: ${ckdStage || 'None'}`}
                 </pre>
               </div>
               <div>
+                <h3 className="font-semibold text-gray-900 mb-2">Extraction Sources</h3>
+                <pre className="bg-gray-50 p-3 rounded text-xs">
+{`LLM Assist Used: ${dataPoints.some(p => p.source_file === 'llm-assist')}
+LLM-Added Rows: ${dataPoints.filter(p => p.source_file === 'llm-assist').length}
+Deterministic Rows: ${dataPoints.filter(p => p.source_file !== 'llm-assist').length}`}
+                </pre>
+              </div>
+              <div>
                 <h3 className="font-semibold text-gray-900 mb-2">Data Points ({dataPoints.length})</h3>
                 <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto max-h-96">
                   {JSON.stringify(dataPoints, null, 2)}
