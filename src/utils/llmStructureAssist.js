@@ -1,45 +1,59 @@
-// LLM-ASSISTED STRUCTURE EXTRACTION
-// Purpose: Help align table values to (test, date) pairs when deterministic parsing is ambiguous
-// NEVER calculates medical values, NEVER guesses, ONLY identifies structure
+// PRIMARY LLM EXTRACTION ENGINE
+// LLM reads lab reports as a human would
+// Responsible for correct date-value pairing, table understanding, multipage handling
 
 const LLM_ENDPOINT = 'https://models.inference.ai.azure.com/chat/completions'
 const MODEL = 'gpt-4o-mini'
 
 /**
- * Extract structured rows from raw text using LLM
- * @param {string} rawText - Extracted text from PDF/OCR
+ * PRIMARY extraction: LLM reads full report text
+ * @param {string} rawText - Full extracted text from PDF/OCR/CSV
  * @returns {Promise<Object>} { success: boolean, rows: Array, source: string, error?: string }
  */
 export async function extractStructuredRows(rawText) {
-  // Fail gracefully if no token
   const token = import.meta.env.VITE_GITHUB_TOKEN
   if (!token) {
-    return { success: false, rows: [], source: 'llm-assist', error: 'No API token' }
+    return { success: false, rows: [], source: 'llm-primary', error: 'No API token configured' }
   }
 
-  // Truncate text if too long (max 4000 chars for context)
-  const truncatedText = rawText.slice(0, 4000)
+  // Use more context for complex reports (up to 8000 chars)
+  const truncatedText = rawText.slice(0, 8000)
 
-  const systemPrompt = `You are a medical lab report structure parser. Extract ONLY the structure of lab test results.
+  const systemPrompt = `You are an expert medical lab report reader. Extract ALL kidney-related lab test results from the report.
 
-STRICT RULES:
-- Extract test name, date, value, unit from tables
-- If ANY field is unclear → return null for that field
-- NEVER guess or infer values
-- NEVER calculate derived values
-- NEVER provide medical advice
-- Return ONLY valid JSON array
+CRITICAL INSTRUCTIONS:
+1. READ TABLES CAREFULLY - understand column headers (dates) and row headers (test names)
+2. PAIR VALUES CORRECTLY - each value must match its correct date and test
+3. HANDLE MULTIPAGE TABLES - if a table continues across pages, maintain date alignment
+4. IGNORE non-lab dates:
+   - Date of Birth (DOB)
+   - Registration dates
+   - Report generation dates
+5. USE ONLY lab result dates (when tests were performed)
+6. If a value is unclear or ambiguous → OMIT that row entirely
+7. NEVER invent or guess numbers
+8. NEVER calculate derived values (like eGFR from creatinine)
 
-Output format:
+KIDNEY-RELATED TESTS TO EXTRACT:
+- Serum Creatinine / S.Creat / Creatinine
+- Blood Urea / Urea / BUN
+- eGFR / Estimated GFR (if explicitly reported)
+- Hemoglobin / Hb / Haemoglobin
+- PTH / Parathyroid Hormone
+- Phosphorus / Phosphate / Serum Phosphorus
+- Bicarbonate / HCO3 / Serum Bicarbonate
+- Calcium / Serum Calcium
+
+OUTPUT FORMAT (valid JSON only):
 [
-  { "test_name": "Serum Creatinine", "date": "2024-03-15", "value": 1.2, "unit": "mg/dL" },
-  { "test_name": "Blood Urea", "date": "2024-03-15", "value": 35, "unit": "mg/dL" }
+  { "test": "Serum Creatinine", "date": "2024-03-15", "value": 1.2, "unit": "mg/dL" },
+  { "test": "Blood Urea", "date": "2024-03-15", "value": 35, "unit": "mg/dL" },
+  { "test": "Hemoglobin", "date": "2024-03-15", "value": 12.5, "unit": "g/dL" }
 ]
 
-Focus on kidney-related tests: creatinine, urea, eGFR, hemoglobin, PTH, phosphorus, bicarbonate, calcium.
-If no clear table structure → return empty array [].`
+Return empty array [] if no kidney-related tests found.`
 
-  const userPrompt = `Extract lab test structure from this text:\n\n${truncatedText}`
+  const userPrompt = `Extract all kidney-related lab test results from this medical report:\n\n${truncatedText}`
 
   try {
     const response = await fetch(LLM_ENDPOINT, {
@@ -55,19 +69,19 @@ If no clear table structure → return empty array [].`
           { role: 'user', content: userPrompt }
         ],
         temperature: 0,
-        max_tokens: 2000
+        max_tokens: 3000
       })
     })
 
     if (!response.ok) {
-      return { success: false, rows: [], source: 'llm-assist', error: `HTTP ${response.status}` }
+      return { success: false, rows: [], source: 'llm-primary', error: `HTTP ${response.status}` }
     }
 
     const data = await response.json()
     const content = data.choices?.[0]?.message?.content
 
     if (!content) {
-      return { success: false, rows: [], source: 'llm-assist', error: 'No content in response' }
+      return { success: false, rows: [], source: 'llm-primary', error: 'No content in response' }
     }
 
     // Parse JSON from response (handle markdown code blocks)
@@ -79,41 +93,43 @@ If no clear table structure → return empty array [].`
     const rows = JSON.parse(jsonText)
 
     if (!Array.isArray(rows)) {
-      return { success: false, rows: [], source: 'llm-assist', error: 'Response not an array' }
+      return { success: false, rows: [], source: 'llm-primary', error: 'Response not an array' }
     }
 
     // Validate and sanitize rows
     const validRows = rows
       .filter(row => row && typeof row === 'object')
-      .filter(row => row.test_name && row.value !== null && row.value !== undefined)
+      .filter(row => row.test && row.value !== null && row.value !== undefined)
       .map(row => ({
-        test_name: String(row.test_name).trim(),
+        test: String(row.test).trim(),
         date: row.date ? String(row.date).trim() : null,
         value: parseFloat(row.value),
         unit: row.unit ? String(row.unit).trim() : null
       }))
       .filter(row => !isNaN(row.value))
+      .filter(row => validateLLMRow(row))
 
     return {
       success: true,
       rows: validRows,
-      source: 'llm-assist',
-      raw_response: content
+      source: 'llm-primary',
+      raw_response: content,
+      total_extracted: validRows.length
     }
 
   } catch (error) {
     return {
       success: false,
       rows: [],
-      source: 'llm-assist',
+      source: 'llm-primary',
       error: error.message
     }
   }
 }
 
 /**
- * Validate LLM-extracted row against physiological ranges
- * @param {Object} row - { test_name, date, value, unit }
+ * Validate LLM-extracted row against physiological ranges and date rules
+ * @param {Object} row - { test, date, value, unit }
  * @returns {boolean}
  */
 export function validateLLMRow(row) {
@@ -134,19 +150,23 @@ export function validateLLMRow(row) {
     urea: [5, 300],
     egfr: [1, 200],
     hemoglobin: [1, 25],
+    hb: [1, 25],
     pth: [1, 2000],
     phosphorus: [0.5, 15],
+    phosphate: [0.5, 15],
     bicarbonate: [5, 50],
+    hco3: [5, 50],
     calcium: [5, 20]
   }
 
-  // Try to match test name to canonical key
-  const testLower = row.test_name.toLowerCase()
+  // Try to match test name to range
+  const testLower = row.test.toLowerCase()
   for (const [key, range] of Object.entries(ranges)) {
     if (testLower.includes(key)) {
       if (row.value < range[0] || row.value > range[1]) {
         return false
       }
+      break
     }
   }
 
@@ -154,59 +174,43 @@ export function validateLLMRow(row) {
 }
 
 /**
- * Merge LLM rows with deterministic extraction results
- * Only adds rows that don't conflict with existing data
- * @param {Array} deterministicRows - ClinicalDataPoint[]
+ * Convert LLM rows to ClinicalDataPoint format
  * @param {Array} llmRows - LLM extracted rows
- * @returns {Array} - Additional rows to add
+ * @param {string} sourceFile - Original filename
+ * @returns {Array} - ClinicalDataPoint[]
  */
-export function mergeLLMRows(deterministicRows, llmRows) {
-  const added = []
+export function convertToDataPoints(llmRows, sourceFile) {
+  const dataPoints = []
   
-  // Create index of existing (test, date) pairs
-  const existing = new Set()
-  for (const row of deterministicRows) {
-    const key = `${row.canonical_test_key}:${row.date_iso}`
-    existing.add(key)
-  }
-
-  // Add LLM rows that don't conflict
-  for (const llmRow of llmRows) {
-    if (!validateLLMRow(llmRow)) continue
-    
-    // Try to canonicalize test name
-    const testLower = llmRow.test_name.toLowerCase()
+  for (const row of llmRows) {
+    // Canonicalize test name
+    const testLower = row.test.toLowerCase()
     let canonicalKey = null
     
     if (testLower.includes('creat')) canonicalKey = 'creatinine'
     else if (testLower.includes('urea') || testLower.includes('bun')) canonicalKey = 'urea'
     else if (testLower.includes('egfr')) canonicalKey = 'egfr'
-    else if (testLower.includes('hb') || testLower.includes('hemoglobin')) canonicalKey = 'hemoglobin'
-    else if (testLower.includes('pth')) canonicalKey = 'pth'
+    else if (testLower.includes('hb') || testLower.includes('hemoglobin') || testLower.includes('haemoglobin')) canonicalKey = 'hemoglobin'
+    else if (testLower.includes('pth') || testLower.includes('parathyroid')) canonicalKey = 'pth'
     else if (testLower.includes('phosph')) canonicalKey = 'phosphorus'
     else if (testLower.includes('bicarb') || testLower.includes('hco3')) canonicalKey = 'bicarbonate'
     else if (testLower.includes('calcium')) canonicalKey = 'calcium'
     
     if (!canonicalKey) continue
-    if (!llmRow.date) continue
+    if (!row.date) continue
     
-    const key = `${canonicalKey}:${llmRow.date}`
-    if (existing.has(key)) continue
-    
-    // Add as new data point
-    added.push({
-      test_name: llmRow.test_name,
+    dataPoints.push({
+      test_name: row.test,
       canonical_test_key: canonicalKey,
-      value: llmRow.value,
-      unit: llmRow.unit || 'unknown',
-      date_iso: llmRow.date,
-      source_file: 'llm-assist',
+      value: row.value,
+      unit: row.unit || 'unknown',
+      date_iso: row.date,
+      source_file: sourceFile,
       source_page: 0,
-      confidence: 0.7
+      confidence: 0.9,
+      extraction_method: 'llm-primary'
     })
-    
-    existing.add(key)
   }
 
-  return added
+  return dataPoints
 }

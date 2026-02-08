@@ -35,8 +35,15 @@ export default function UnderstandingSummary() {
         >
           <h1 className="text-3xl font-bold text-gray-900 mb-6">What We Detected</h1>
           
+          <div className="mb-6 flex items-center space-x-2 text-sm text-blue-600 bg-blue-50 p-3 rounded">
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
+            </svg>
+            <span>Data extracted by AI • Review before proceeding</span>
+          </div>
+          
           <p className="text-gray-600 mb-8">
-            Review the extracted clinical data before proceeding to analysis.
+            Our AI has read your lab report and extracted the following clinical data.
           </p>
           
           {/* Summary Stats */}
@@ -74,14 +81,17 @@ export default function UnderstandingSummary() {
           
           {/* Analysis Requirements */}
           <div className="mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Analysis Requirements</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Analysis Capability</h2>
             <div className="space-y-3">
               <div className="flex items-center">
-                <span className={`mr-2 ${creatinineCount >= 2 ? 'text-green-600' : 'text-gray-400'}`}>
-                  {creatinineCount >= 2 ? '✓' : '○'}
+                <span className={`mr-2 ${creatinineCount >= 2 ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {creatinineCount >= 2 ? '✓' : '⚠'}
                 </span>
                 <span className="text-gray-700">
-                  Creatinine values for ≥2 dates (found: {creatinineCount})
+                  {creatinineCount >= 2 
+                    ? `Full trend analysis available (${creatinineCount} creatinine values found)`
+                    : `Partial data only (${creatinineCount} creatinine value${creatinineCount === 1 ? '' : 's'} found, need ≥2 for trends)`
+                  }
                 </span>
               </div>
             </div>
@@ -89,36 +99,33 @@ export default function UnderstandingSummary() {
           
           {creatinineCount < 2 && (
             <div className="mb-8 bg-yellow-50 border-l-4 border-yellow-500 p-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">Cannot Proceed</h2>
-              <p className="text-sm text-gray-700">
-                Need at least 2 creatinine values on different dates for trend analysis.
-                Currently detected: {creatinineCount}
+              <h2 className="text-lg font-semibold text-yellow-900 mb-2">Partial Data Available</h2>
+              <p className="text-sm text-yellow-800">
+                We found {creatinineCount} creatinine value{creatinineCount === 1 ? '' : 's'}. 
+                For complete trend analysis, we need values from at least 2 different dates.
+                You can still view the available data.
               </p>
             </div>
           )}
           
           {/* Actions */}
           <div className="flex space-x-4">
-            {creatinineCount >= 2 ? (
-              <button
-                onClick={handleConfirm}
-                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
-              >
-                Proceed to Analysis
-              </button>
-            ) : (
-              <button
-                onClick={() => navigate('/upload')}
-                className="flex-1 bg-gray-600 text-white py-3 rounded-lg font-semibold hover:bg-gray-700 transition"
-              >
+            <button
+              onClick={handleConfirm}
+              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+            >
+              {creatinineCount >= 2 ? 'Proceed to Full Analysis' : 'View Available Data'}
+            </button>
                 Upload Different Files
               </button>
             )}
             <button
               onClick={() => navigate('/upload')}
+            <button
+              onClick={() => navigate('/upload')}
               className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition"
             >
-              Back
+              Upload Different Report
             </button>
           </div>
         </motion.div>

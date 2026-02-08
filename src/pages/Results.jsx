@@ -112,6 +112,12 @@ export default function Results() {
           <p className="text-gray-600">
             Patient: {patientInfo.gender === 'male' ? 'Male' : 'Female'}, Born {patientInfo.birthYear}
           </p>
+          <div className="mt-2 flex items-center space-x-2 text-sm text-blue-600">
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
+            </svg>
+            <span>Data extracted by AI • {dataPoints.length} values found</span>
+          </div>
         </motion.div>
 
         {!canAnalyze ? (
@@ -120,8 +126,11 @@ export default function Results() {
             animate={{ opacity: 1, y: 0 }}
             className="bg-yellow-50 border-l-4 border-yellow-500 p-6 mb-8"
           >
-            <h2 className="text-xl font-bold text-yellow-900 mb-2">Cannot Generate Analysis</h2>
+            <h2 className="text-xl font-bold text-yellow-900 mb-2">Partial Data Detected</h2>
             <p className="text-yellow-800">{blockReason}</p>
+            <p className="text-yellow-700 text-sm mt-2">
+              Showing available data below. For complete analysis, ensure your report contains creatinine values from at least 2 different dates.
+            </p>
           </motion.div>
         ) : (
           <>
@@ -259,9 +268,10 @@ CKD Stage: ${ckdStage || 'None'}`}
               <div>
                 <h3 className="font-semibold text-gray-900 mb-2">Extraction Sources</h3>
                 <pre className="bg-gray-50 p-3 rounded text-xs">
-{`LLM Assist Used: ${dataPoints.some(p => p.source_file === 'llm-assist')}
-LLM-Added Rows: ${dataPoints.filter(p => p.source_file === 'llm-assist').length}
-Deterministic Rows: ${dataPoints.filter(p => p.source_file !== 'llm-assist').length}`}
+{`Extraction Method: AI-powered (LLM)
+Total Values Extracted: ${dataPoints.length}
+AI-Extracted Rows: ${dataPoints.filter(p => p.extraction_method === 'llm-primary').length}
+Legacy Rows: ${dataPoints.filter(p => !p.extraction_method).length}`}
                 </pre>
               </div>
               <div>

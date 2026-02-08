@@ -4,8 +4,7 @@ import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
-import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
-import { extractStructuredRows, mergeLLMRows } from '../utils/llmStructureAssist'
+import { extractStructuredRows, convertToDataPoints } from '../utils/llmStructureAssist'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -98,26 +97,18 @@ export default function Upload() {
         }
         
         if (extractedText) {
-          // Extract clinical data points (deterministic)
-          const dataPoints = extractClinicalDataPoints(extractedText, file.name, 1)
+          // PRIMARY EXTRACTION: LLM reads the report
+          setProcessingStatus('AI reading report...')
+          const llmResult = await extractStructuredRows(extractedText)
           
-          // Try LLM-assisted structure extraction if deterministic extraction found few results
-          if (dataPoints.length < 3) {
-            setProcessingStatus('Analyzing structure...')
-            const llmResult = await extractStructuredRows(extractedText)
-            
-            if (llmResult.success && llmResult.rows.length > 0) {
-              const additionalRows = mergeLLMRows(dataPoints, llmResult.rows)
-              dataPoints.push(...additionalRows)
-              
-              // Store LLM metadata for debug
-              if (additionalRows.length > 0) {
-                console.log(`LLM assist added ${additionalRows.length} rows for ${file.name}`)
-              }
-            }
+          if (llmResult.success && llmResult.rows.length > 0) {
+            const dataPoints = convertToDataPoints(llmResult.rows, file.name)
+            allDataPoints.push(...dataPoints)
+            console.log(`LLM extracted ${dataPoints.length} data points from ${file.name}`)
+          } else {
+            console.warn(`LLM extraction failed for ${file.name}:`, llmResult.error)
           }
           
-          allDataPoints.push(...dataPoints)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
