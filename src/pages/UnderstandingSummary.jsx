@@ -116,11 +116,6 @@ export default function UnderstandingSummary() {
             >
               {creatinineCount >= 2 ? 'Proceed to Full Analysis' : 'View Available Data'}
             </button>
-                Upload Different Files
-              </button>
-            )}
-            <button
-              onClick={() => navigate('/upload')}
             <button
               onClick={() => navigate('/upload')}
               className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition"
