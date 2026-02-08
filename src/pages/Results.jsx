@@ -5,6 +5,7 @@ import Disclaimer from '../components/Disclaimer'
 import EGFRChart from '../components/EGFRChart'
 import MarkerCard from '../components/MarkerCard'
 import TrendBadge from '../components/TrendBadge'
+import LLMBadge from '../components/LLMBadge'
 import { calculateEGFRFromCreatinine, calculateTrend, determineCKDStage } from '../utils/clinicalAnalyzer'
 import { getDataPointsForTest, countOccurrences } from '../utils/clinicalDataExtractor'
 
@@ -108,10 +109,18 @@ export default function Results() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Kidney Function Analysis</h1>
-          <p className="text-gray-600">
-            Patient: {patientInfo.gender === 'male' ? 'Male' : 'Female'}, Born {patientInfo.birthYear}
-          </p>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-4xl font-bold text-gray-900 mb-2">Kidney Function Analysis</h1>
+              <p className="text-gray-600">
+                Patient: {patientInfo.gender === 'male' ? 'Male' : 'Female'}, Born {patientInfo.birthYear}
+              </p>
+            </div>
+            <LLMBadge 
+              llmCount={dataPoints.filter(p => p.llm_used).length} 
+              totalCount={dataPoints.length} 
+            />
+          </div>
           <div className="mt-2 flex items-center space-x-2 text-sm text-blue-600">
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
