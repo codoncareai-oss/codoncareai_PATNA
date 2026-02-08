@@ -5,7 +5,7 @@ import Disclaimer from '../components/Disclaimer'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
 import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
-import { extractStructuredRows, convertToDataPoints } from '../utils/llmStructureAssist'
+import { refineClinicalData, convertToDataPoints } from '../utils/llmPrimaryRefiner'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -18,6 +18,7 @@ export default function Upload() {
   const [processingStatus, setProcessingStatus] = useState('')
   const [currentFile, setCurrentFile] = useState('')
   const [ocrProgress, setOcrProgress] = useState(0)
+  const [extractionStats, setExtractionStats] = useState(null)
 
   const handleDrag = (e) => {
     e.preventDefault()
@@ -61,9 +62,14 @@ export default function Upload() {
 
     setProcessing(true)
     setProcessingStatus('Processing files...')
+    setExtractionStats(null)
     
     const allDataPoints = []
     let allExtractedText = ''
+    let totalDeterministic = 0
+    let totalLLM = 0
+    let totalDiscarded = 0
+    let llmActuallyRan = false
 
     try {
       // Process each file
@@ -98,56 +104,63 @@ export default function Upload() {
         }
         
         if (extractedText) {
-          // STEP 1: Try deterministic extraction first
           console.log(`📄 Processing ${file.name}: ${extractedText.length} chars extracted`)
-          const deterministicPoints = extractClinicalDataPoints(extractedText, file.name, 1)
-          console.log(`🔍 Deterministic extraction: ${deterministicPoints.length} points found`)
           
-          // STEP 2: If deterministic extraction found < 3 valid rows, use LLM assist
-          if (deterministicPoints.length < 3) {
-            console.log(`⚠️ Only ${deterministicPoints.length} points found - triggering LLM assist`)
-            setProcessingStatus('AI analyzing structure...')
+          // STEP 1: Deterministic extraction
+          const deterministicPoints = extractClinicalDataPoints(extractedText, file.name, 1)
+          console.log(`🔍 Deterministic: ${deterministicPoints.length} points`)
+          totalDeterministic += deterministicPoints.length
+          
+          // STEP 2: LLM PRIMARY REFINER (ALWAYS RUNS)
+          setProcessingStatus('🤖 AI refining with Phi-4...')
+          
+          try {
+            const llmResult = await refineClinicalData(extractedText)
             
-            try {
-              const llmResult = await extractStructuredRows(extractedText)
+            if (llmResult.success && llmResult.data?.measurements?.length > 0) {
+              llmActuallyRan = true
+              const llmPoints = convertToDataPoints(llmResult.data, file.name)
+              console.log(`🤖 LLM refined: ${llmPoints.length} points`)
+              totalLLM += llmPoints.length
               
-              if (llmResult.success && llmResult.data && llmResult.data.measurements.length > 0) {
-                const llmPoints = convertToDataPoints(llmResult.data, file.name)
-                console.log(`🤖 LLM extracted ${llmPoints.length} additional points`)
-                
-                // Merge: add LLM points that don't conflict with deterministic points
-                const existingKeys = new Set(
-                  deterministicPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`)
-                )
-                
-                let addedCount = 0
-                for (const llmPoint of llmPoints) {
-                  const key = `${llmPoint.canonical_test_key}:${llmPoint.date_iso}`
-                  if (!existingKeys.has(key)) {
-                    deterministicPoints.push(llmPoint)
-                    existingKeys.add(key)
-                    addedCount++
-                  }
+              // STEP 3: Merge - LLM has priority, deduplicate by (test + date)
+              const mergedPoints = [...llmPoints]
+              const llmKeys = new Set(llmPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`))
+              
+              for (const detPoint of deterministicPoints) {
+                const key = `${detPoint.canonical_test_key}:${detPoint.date_iso}`
+                if (!llmKeys.has(key)) {
+                  mergedPoints.push(detPoint)
                 }
-                
-                console.log(`✅ Merged: ${addedCount} new points added from LLM (${deterministicPoints.length} total)`)
-              } else {
-                console.warn(`❌ LLM extraction failed for ${file.name}:`, llmResult.error)
               }
-            } catch (error) {
-              console.error(`❌ LLM assist error for ${file.name}:`, error)
+              
+              console.log(`✅ Merged: ${mergedPoints.length} total (LLM priority)`)
+              allDataPoints.push(...mergedPoints)
+            } else {
+              console.warn(`⚠️ LLM returned no data for ${file.name}`)
+              allDataPoints.push(...deterministicPoints)
             }
-          } else {
-            console.log(`✅ Deterministic extraction sufficient (${deterministicPoints.length} points)`)
+          } catch (error) {
+            console.error(`❌ LLM refiner failed for ${file.name}:`, error.message)
+            throw error // Hard fail as per requirements
           }
           
-          allDataPoints.push(...deterministicPoints)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
 
-      console.log(`📊 FINAL EXTRACTION SUMMARY: ${allDataPoints.length} total data points`)
-      console.log(`🤖 LLM-assisted points: ${allDataPoints.filter(p => p.llm_used).length}`)
+      console.log(`📊 FINAL EXTRACTION SUMMARY`)
+      console.log(`  Deterministic: ${totalDeterministic} rows`)
+      console.log(`  LLM accepted: ${totalLLM} rows`)
+      console.log(`  Total: ${allDataPoints.length} data points`)
+      console.log(`  LLM ran: ${llmActuallyRan ? 'YES' : 'NO'}`)
+
+      setExtractionStats({
+        deterministic: totalDeterministic,
+        llm: totalLLM,
+        total: allDataPoints.length,
+        llmRan: llmActuallyRan
+      })
 
       if (allDataPoints.length === 0) {
         setProcessing(false)
@@ -307,6 +320,23 @@ export default function Upload() {
                     <p className="text-sm text-gray-600 text-center mt-1">{ocrProgress}%</p>
                   </>
                 )}
+              </div>
+            )}
+
+            {extractionStats && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  {extractionStats.llmRan && (
+                    <span className="text-sm font-semibold text-blue-700">
+                      🤖 AI-refined using Phi-4
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm text-gray-700 space-y-1">
+                  <p>Deterministic rows: {extractionStats.deterministic}</p>
+                  <p>LLM accepted rows: {extractionStats.llm}</p>
+                  <p className="font-semibold">Total extracted: {extractionStats.total}</p>
+                </div>
               </div>
             )}
           </form>
