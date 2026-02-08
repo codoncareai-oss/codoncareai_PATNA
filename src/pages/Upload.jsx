@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
+import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
 import { extractStructuredRows, convertToDataPoints } from '../utils/llmStructureAssist'
 
 export default function Upload() {
@@ -97,18 +98,37 @@ export default function Upload() {
         }
         
         if (extractedText) {
-          // PRIMARY EXTRACTION: LLM reads the report
-          setProcessingStatus('AI reading report...')
-          const llmResult = await extractStructuredRows(extractedText)
+          // STEP 1: Try deterministic extraction first
+          const deterministicPoints = extractClinicalDataPoints(extractedText, file.name, 1)
           
-          if (llmResult.success && llmResult.rows.length > 0) {
-            const dataPoints = convertToDataPoints(llmResult.rows, file.name)
-            allDataPoints.push(...dataPoints)
-            console.log(`LLM extracted ${dataPoints.length} data points from ${file.name}`)
-          } else {
-            console.warn(`LLM extraction failed for ${file.name}:`, llmResult.error)
+          // STEP 2: If deterministic extraction found < 3 valid rows, use LLM assist
+          if (deterministicPoints.length < 3) {
+            setProcessingStatus('AI analyzing structure...')
+            const llmResult = await extractStructuredRows(extractedText)
+            
+            if (llmResult.success && llmResult.data && llmResult.data.measurements.length > 0) {
+              const llmPoints = convertToDataPoints(llmResult.data, file.name)
+              
+              // Merge: add LLM points that don't conflict with deterministic points
+              const existingKeys = new Set(
+                deterministicPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`)
+              )
+              
+              for (const llmPoint of llmPoints) {
+                const key = `${llmPoint.canonical_test_key}:${llmPoint.date_iso}`
+                if (!existingKeys.has(key)) {
+                  deterministicPoints.push(llmPoint)
+                  existingKeys.add(key)
+                }
+              }
+              
+              console.log(`Total extracted: ${deterministicPoints.length} (${llmPoints.length} from LLM)`)
+            } else {
+              console.warn(`LLM extraction failed for ${file.name}:`, llmResult.error)
+            }
           }
           
+          allDataPoints.push(...deterministicPoints)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }

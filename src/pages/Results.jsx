@@ -116,7 +116,12 @@ export default function Results() {
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
             </svg>
-            <span>Data extracted by AI • {dataPoints.length} values found</span>
+            <span>
+              {dataPoints.filter(p => p.extraction_method === 'llm-assist').length > 0 
+                ? `Data extracted with AI assistance • ${dataPoints.length} values found`
+                : `Data extracted • ${dataPoints.length} values found`
+              }
+            </span>
           </div>
         </motion.div>
 
@@ -268,10 +273,10 @@ CKD Stage: ${ckdStage || 'None'}`}
               <div>
                 <h3 className="font-semibold text-gray-900 mb-2">Extraction Sources</h3>
                 <pre className="bg-gray-50 p-3 rounded text-xs">
-{`Extraction Method: AI-powered (LLM)
-Total Values Extracted: ${dataPoints.length}
-AI-Extracted Rows: ${dataPoints.filter(p => p.extraction_method === 'llm-primary').length}
-Legacy Rows: ${dataPoints.filter(p => !p.extraction_method).length}`}
+{`Extraction Methods:
+- Deterministic: ${dataPoints.filter(p => !p.extraction_method || p.extraction_method !== 'llm-assist').length}
+- LLM Assist: ${dataPoints.filter(p => p.extraction_method === 'llm-assist').length}
+Total Values: ${dataPoints.length}`}
                 </pre>
               </div>
               <div>

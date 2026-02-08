@@ -143,25 +143,61 @@ function extractValidDates(text) {
 }
 
 function parseToISO(dateStr) {
-  // Try DD/MM/YYYY
-  const ddmmyyyy = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/)
+  // Clean the input
+  const cleaned = dateStr.trim()
+  
+  // Try DD/MM/YYYY or DD-MM-YYYY
+  const ddmmyyyy = cleaned.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/)
   if (ddmmyyyy) {
     let year = parseInt(ddmmyyyy[3])
-    if (year < 100) year += 2000
+    
+    // Handle 2-digit years: only accept 20-26 (2020-2026)
+    if (year < 100) {
+      if (year >= 20 && year <= 26) {
+        year += 2000
+      } else {
+        return null // Reject ambiguous 2-digit years
+      }
+    }
+    
     const month = parseInt(ddmmyyyy[2])
     const day = parseInt(ddmmyyyy[1])
     
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const date = new Date(year, month - 1, day)
-      if (!isNaN(date.getTime())) {
-        return date.toISOString().split('T')[0]
-      }
+    // Validate month and day
+    if (month < 1 || month > 12) return null
+    if (day < 1 || day > 31) return null
+    
+    // Create date and validate it's real
+    const date = new Date(year, month - 1, day)
+    if (isNaN(date.getTime())) return null
+    
+    // Double-check the date components match (handles invalid dates like Feb 31)
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+      return null
     }
+    
+    return date.toISOString().split('T')[0]
   }
   
-  const parsed = new Date(dateStr)
-  if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split('T')[0]
+  // Try text date format: "15 Mar 2024"
+  const textDate = cleaned.match(/^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})$/i)
+  if (textDate) {
+    const day = parseInt(textDate[1])
+    const monthStr = textDate[2].toLowerCase()
+    const year = parseInt(textDate[3])
+    
+    const monthMap = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    }
+    
+    const month = monthMap[monthStr.substring(0, 3)]
+    if (month === undefined) return null
+    
+    const date = new Date(year, month, day)
+    if (isNaN(date.getTime())) return null
+    
+    return date.toISOString().split('T')[0]
   }
   
   return null
