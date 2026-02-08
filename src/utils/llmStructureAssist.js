@@ -11,12 +11,22 @@ const MODEL = 'gpt-4o-mini'
  */
 export async function extractStructuredRows(rawText) {
   const token = import.meta.env.VITE_GITHUB_TOKEN
+  
+  // HARD FAIL if token missing
   if (!token) {
-    return { success: false, data: null, error: 'No API token configured' }
+    const error = '❌ VITE_GITHUB_TOKEN is not configured. LLM extraction cannot proceed.'
+    console.error(error)
+    throw new Error(error)
   }
 
   // Use full context for complex reports
   const truncatedText = rawText.slice(0, 12000)
+
+  console.log('🚀 LLM CALL STARTED')
+  console.log('📍 Endpoint:', LLM_ENDPOINT)
+  console.log('🤖 Model:', MODEL)
+  console.log('📄 Text length:', truncatedText.length, 'chars')
+  console.log('🔑 Token present:', token ? 'YES (length: ' + token.length + ')' : 'NO')
 
   const systemPrompt = `You are a medical document understanding engine.
 
@@ -62,6 +72,8 @@ Return ONLY valid JSON. No markdown. No explanation.`
   const userPrompt = `Extract structured data from this medical report:\n\n${truncatedText}`
 
   try {
+    console.log('⏳ Sending request to GitHub Models...')
+    
     const response = await fetch(LLM_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -79,16 +91,26 @@ Return ONLY valid JSON. No markdown. No explanation.`
       })
     })
 
+    console.log('✅ Response received')
+    console.log('📊 HTTP Status:', response.status, response.statusText)
+    console.log('📋 Response OK:', response.ok)
+
     if (!response.ok) {
+      console.error('❌ LLM API Error:', response.status, response.statusText)
       return { success: false, data: null, error: `HTTP ${response.status}` }
     }
 
     const result = await response.json()
+    console.log('📦 Raw API Response:', JSON.stringify(result).substring(0, 200) + '...')
+    
     const content = result.choices?.[0]?.message?.content
 
     if (!content) {
+      console.error('❌ No content in LLM response')
       return { success: false, data: null, error: 'No content in response' }
     }
+
+    console.log('📝 LLM Content length:', content.length, 'chars')
 
     // Parse JSON from response (handle markdown code blocks)
     let jsonText = content.trim()
@@ -100,24 +122,37 @@ Return ONLY valid JSON. No markdown. No explanation.`
 
     // Validate schema
     if (!data || typeof data !== 'object') {
+      console.error('❌ Invalid LLM response format')
       return { success: false, data: null, error: 'Invalid response format' }
     }
 
     if (!Array.isArray(data.measurements)) {
+      console.error('❌ Missing measurements array in LLM response')
       return { success: false, data: null, error: 'Missing measurements array' }
     }
+
+    console.log('✅ LLM EXTRACTION SUCCESS')
+    console.log('📊 Measurements extracted:', data.measurements.length)
+    console.log('👤 Gender detected:', data.gender || 'null')
 
     return {
       success: true,
       data: data,
-      raw_response: content
+      raw_response: content,
+      llm_used: true
     }
 
   } catch (error) {
+    console.error('❌ LLM CALL FAILED')
+    console.error('Error type:', error.name)
+    console.error('Error message:', error.message)
+    console.error('Stack:', error.stack)
+    
     return {
       success: false,
       data: null,
-      error: error.message
+      error: error.message,
+      llm_used: false
     }
   }
 }
@@ -220,9 +255,12 @@ export function convertToDataPoints(llmData, sourceFile) {
       source_file: sourceFile,
       source_page: 0,
       confidence: 0.85,
-      extraction_method: 'llm-assist'
+      extraction_method: 'llm-assist',
+      llm_used: true
     })
   }
+
+  console.log('✅ Converted', dataPoints.length, 'LLM measurements to data points')
 
   return dataPoints
 }

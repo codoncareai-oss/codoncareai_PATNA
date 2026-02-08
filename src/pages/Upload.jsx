@@ -99,39 +99,55 @@ export default function Upload() {
         
         if (extractedText) {
           // STEP 1: Try deterministic extraction first
+          console.log(`📄 Processing ${file.name}: ${extractedText.length} chars extracted`)
           const deterministicPoints = extractClinicalDataPoints(extractedText, file.name, 1)
+          console.log(`🔍 Deterministic extraction: ${deterministicPoints.length} points found`)
           
           // STEP 2: If deterministic extraction found < 3 valid rows, use LLM assist
           if (deterministicPoints.length < 3) {
+            console.log(`⚠️ Only ${deterministicPoints.length} points found - triggering LLM assist`)
             setProcessingStatus('AI analyzing structure...')
-            const llmResult = await extractStructuredRows(extractedText)
             
-            if (llmResult.success && llmResult.data && llmResult.data.measurements.length > 0) {
-              const llmPoints = convertToDataPoints(llmResult.data, file.name)
+            try {
+              const llmResult = await extractStructuredRows(extractedText)
               
-              // Merge: add LLM points that don't conflict with deterministic points
-              const existingKeys = new Set(
-                deterministicPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`)
-              )
-              
-              for (const llmPoint of llmPoints) {
-                const key = `${llmPoint.canonical_test_key}:${llmPoint.date_iso}`
-                if (!existingKeys.has(key)) {
-                  deterministicPoints.push(llmPoint)
-                  existingKeys.add(key)
+              if (llmResult.success && llmResult.data && llmResult.data.measurements.length > 0) {
+                const llmPoints = convertToDataPoints(llmResult.data, file.name)
+                console.log(`🤖 LLM extracted ${llmPoints.length} additional points`)
+                
+                // Merge: add LLM points that don't conflict with deterministic points
+                const existingKeys = new Set(
+                  deterministicPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`)
+                )
+                
+                let addedCount = 0
+                for (const llmPoint of llmPoints) {
+                  const key = `${llmPoint.canonical_test_key}:${llmPoint.date_iso}`
+                  if (!existingKeys.has(key)) {
+                    deterministicPoints.push(llmPoint)
+                    existingKeys.add(key)
+                    addedCount++
+                  }
                 }
+                
+                console.log(`✅ Merged: ${addedCount} new points added from LLM (${deterministicPoints.length} total)`)
+              } else {
+                console.warn(`❌ LLM extraction failed for ${file.name}:`, llmResult.error)
               }
-              
-              console.log(`Total extracted: ${deterministicPoints.length} (${llmPoints.length} from LLM)`)
-            } else {
-              console.warn(`LLM extraction failed for ${file.name}:`, llmResult.error)
+            } catch (error) {
+              console.error(`❌ LLM assist error for ${file.name}:`, error)
             }
+          } else {
+            console.log(`✅ Deterministic extraction sufficient (${deterministicPoints.length} points)`)
           }
           
           allDataPoints.push(...deterministicPoints)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
+
+      console.log(`📊 FINAL EXTRACTION SUMMARY: ${allDataPoints.length} total data points`)
+      console.log(`🤖 LLM-assisted points: ${allDataPoints.filter(p => p.llm_used).length}`)
 
       if (allDataPoints.length === 0) {
         setProcessing(false)

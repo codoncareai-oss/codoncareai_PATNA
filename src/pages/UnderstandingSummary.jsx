@@ -40,8 +40,8 @@ export default function UnderstandingSummary() {
               <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
             </svg>
             <span>
-              {dataPoints.filter(p => p.extraction_method === 'llm-assist').length > 0
-                ? 'Data extracted with AI assistance • Review before proceeding'
+              {dataPoints.filter(p => p.llm_used).length > 0
+                ? '🤖 AI-assisted document understanding used • Review before proceeding'
                 : 'Data extracted • Review before proceeding'
               }
             </span>

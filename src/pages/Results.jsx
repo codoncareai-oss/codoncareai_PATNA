@@ -117,8 +117,8 @@ export default function Results() {
               <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-5a1 1 0 100 2 1 1 0 000-2z"/>
             </svg>
             <span>
-              {dataPoints.filter(p => p.extraction_method === 'llm-assist').length > 0 
-                ? `Data extracted with AI assistance • ${dataPoints.length} values found`
+              {dataPoints.filter(p => p.llm_used).length > 0 
+                ? `🤖 AI-assisted document understanding used • ${dataPoints.length} values found`
                 : `Data extracted • ${dataPoints.length} values found`
               }
             </span>
@@ -274,9 +274,11 @@ CKD Stage: ${ckdStage || 'None'}`}
                 <h3 className="font-semibold text-gray-900 mb-2">Extraction Sources</h3>
                 <pre className="bg-gray-50 p-3 rounded text-xs">
 {`Extraction Methods:
-- Deterministic: ${dataPoints.filter(p => !p.extraction_method || p.extraction_method !== 'llm-assist').length}
-- LLM Assist: ${dataPoints.filter(p => p.extraction_method === 'llm-assist').length}
-Total Values: ${dataPoints.length}`}
+- Deterministic: ${dataPoints.filter(p => !p.llm_used).length}
+- LLM Assist: ${dataPoints.filter(p => p.llm_used).length}
+Total Values: ${dataPoints.length}
+
+LLM Status: ${dataPoints.some(p => p.llm_used) ? '✅ ACTIVE' : '⚪ Not used'}`}
                 </pre>
               </div>
               <div>
