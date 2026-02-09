@@ -111,26 +111,25 @@ export default function Upload() {
         // PHASE 2: LLM NORMALIZATION (STRICT MODE)
         setProcessingStatus('Phase 2: LLM normalizing rows...')
         const normalizeResult = await normalizeLLM(rawRows)
-          
-          if (!normalizeResult.success) {
-            console.error(`❌ Phase 2 failed for ${file.name}:`, normalizeResult.error)
-            throw new Error(normalizeResult.error)
-          }
-          
-          totalNormalizedRows += normalizeResult.normalizedRows.length
-          console.log(`✅ Phase 2 complete: ${normalizeResult.normalizedRows.length} normalized rows`)
-          
-          // CRITICAL VALIDATION
-          if (rawRows.length !== normalizeResult.normalizedRows.length) {
-            const error = `DATA LOSS DETECTED: ${rawRows.length} raw rows → ${normalizeResult.normalizedRows.length} normalized rows`
-            console.error(`❌ ${error}`)
-            throw new Error(error)
-          }
-          
-          console.log(`✅ VALIDATION PASSED: No data loss`)
-          
-          allNormalizedRows.push(...normalizeResult.normalizedRows)
+        
+        if (!normalizeResult.success) {
+          console.error(`❌ Phase 2 failed for ${file.name}:`, normalizeResult.error)
+          throw new Error(normalizeResult.error)
         }
+        
+        totalNormalizedRows += normalizeResult.normalizedRows.length
+        console.log(`✅ Phase 2 complete: ${normalizeResult.normalizedRows.length} normalized rows`)
+        
+        // CRITICAL VALIDATION
+        if (rawRows.length !== normalizeResult.normalizedRows.length) {
+          const error = `DATA LOSS DETECTED: ${rawRows.length} raw rows → ${normalizeResult.normalizedRows.length} normalized rows`
+          console.error(`❌ ${error}`)
+          throw new Error(error)
+        }
+        
+        console.log(`✅ VALIDATION PASSED: No data loss`)
+        
+        allNormalizedRows.push(...normalizeResult.normalizedRows)
       }
 
       console.log(`\n========================================`)
