@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
-import { extractTextFromPDF } from '../utils/pdfTextExtract'
-import { extractTextFromImage } from '../utils/ocrExtract'
+import { extractRawRowsBackend } from '../utils/backendOCR'
 import { extractRawRows } from '../utils/rawRowExtractor'
 import { normalizeLLM } from '../utils/llmNormalizer'
 
@@ -65,7 +64,6 @@ export default function Upload() {
     setExtractionStats(null)
     
     const allNormalizedRows = []
-    let allExtractedText = ''
     let totalRawRows = 0
     let totalNormalizedRows = 0
 
@@ -75,50 +73,44 @@ export default function Upload() {
         const file = files[i]
         setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
         
-        let extractedText = ''
-        let fileType = 'pdf'
+        let rawRows = []
         
-        // Extract text based on file type
+        console.log(`\n========================================`)
+        console.log(`📄 Processing: ${file.name}`)
+        console.log(`========================================`)
+        
+        // PHASE 1: RAW ROW EXTRACTION (NO LLM)
         if (file.name.endsWith('.csv')) {
-          setProcessingStatus('Reading CSV...')
-          extractedText = await file.text()
-          fileType = 'csv'
-        } else if (file.name.endsWith('.pdf')) {
-          setProcessingStatus('Extracting text from PDF...')
-          extractedText = await extractTextFromPDF(file)
-          fileType = 'pdf'
-          
-          if (!extractedText || extractedText.length < 50) {
-            console.warn(`Could not extract text from ${file.name}`)
-            continue
+          // CSV: Use simple text extraction
+          setProcessingStatus('Phase 1: Extracting CSV rows...')
+          const csvText = await file.text()
+          rawRows = extractRawRows(csvText, 'csv')
+        } else if (file.name.endsWith('.pdf') || file.name.match(/\.(png|jpg|jpeg)$/i)) {
+          // PDF/Image: Use backend PaddleOCR
+          setProcessingStatus('Phase 1: Running PaddleOCR...')
+          try {
+            rawRows = await extractRawRowsBackend(file)
+          } catch (error) {
+            console.error(`❌ Backend OCR failed for ${file.name}:`, error.message)
+            alert(`Backend OCR failed: ${error.message}. Make sure backend is running.`)
+            throw error
           }
-        } else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
-          setProcessingStatus(`Running OCR on image ${i + 1}...`)
-          const ocrResult = await extractTextFromImage(file, setOcrProgress)
-          fileType = 'image'
-          
-          if (!ocrResult || !ocrResult.text) {
-            console.warn(`OCR failed for ${file.name}`)
-            continue
-          }
-          
-          extractedText = ocrResult.text
+        } else {
+          console.warn(`Unsupported file type: ${file.name}`)
+          continue
         }
         
-        if (extractedText) {
-          console.log(`\n========================================`)
-          console.log(`📄 Processing: ${file.name}`)
-          console.log(`========================================`)
-          
-          // PHASE 1: RAW ROW EXTRACTION (NO LLM)
-          setProcessingStatus('Phase 1: Extracting raw rows...')
-          const rawRows = extractRawRows(extractedText, fileType)
-          totalRawRows += rawRows.length
-          console.log(`✅ Phase 1 complete: ${rawRows.length} raw rows`)
-          
-          // PHASE 2: LLM NORMALIZATION (STRICT MODE)
-          setProcessingStatus('Phase 2: LLM normalizing rows...')
-          const normalizeResult = await normalizeLLM(rawRows)
+        if (rawRows.length === 0) {
+          console.warn(`No rows extracted from ${file.name}`)
+          continue
+        }
+        
+        totalRawRows += rawRows.length
+        console.log(`✅ Phase 1 complete: ${rawRows.length} raw rows`)
+        
+        // PHASE 2: LLM NORMALIZATION (STRICT MODE)
+        setProcessingStatus('Phase 2: LLM normalizing rows...')
+        const normalizeResult = await normalizeLLM(rawRows)
           
           if (!normalizeResult.success) {
             console.error(`❌ Phase 2 failed for ${file.name}:`, normalizeResult.error)
@@ -138,7 +130,6 @@ export default function Upload() {
           console.log(`✅ VALIDATION PASSED: No data loss`)
           
           allNormalizedRows.push(...normalizeResult.normalizedRows)
-          allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
 
@@ -164,7 +155,6 @@ export default function Upload() {
       // Store and navigate
       sessionStorage.setItem('normalizedRows', JSON.stringify(allNormalizedRows))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
-      sessionStorage.setItem('extractedText', allExtractedText)
       
       // For now, navigate to results (Phase 3+ will handle conversion)
       navigate('/results')
