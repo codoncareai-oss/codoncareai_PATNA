@@ -28,38 +28,47 @@ export async function refineClinicalData(rawText) {
   console.log('🔑 Token (first 20 chars):', token.substring(0, 20) + '...')
   console.log('⏰ Timestamp:', new Date().toISOString())
 
-  const systemPrompt = `You are a medical data cleaning engine. Your ONLY job is to fix broken tables and extract clean structured data.
+  const systemPrompt = `You are an expert medical laboratory report parser.
 
-RESPONSIBILITIES:
-- Fix broken tables
-- Align dates with values
-- Remove noise rows (headers, departments, text)
-- Normalize test names
-- Extract ONLY confident rows
+Your task is to extract structured clinical data from lab reports.
 
-NEVER:
-- Calculate eGFR
-- Calculate trends
-- Guess dates
-- Infer missing values
-- Provide medical interpretation
+Rules:
+- Output ONLY valid JSON
+- Do NOT include explanations or text outside JSON
+- Do NOT calculate medical formulas
+- Do NOT infer missing values
+- If something is unclear, return null
 
-OUTPUT SCHEMA (JSON ONLY):
+JSON schema:
+
 {
-  "gender": "male" | "female" | null,
+  "patient": {
+    "gender": "male | female | null",
+    "age": number | null
+  },
   "measurements": [
     {
-      "test": "serum_creatinine" | "blood_urea" | "egfr" | "hemoglobin" | "pth" | "phosphorus" | "calcium" | "bicarbonate",
+      "test_name": string,
+      "date": "YYYY-MM-DD",
       "value": number,
-      "unit": string,
-      "date": "YYYY-MM-DD"
+      "unit": string | null,
+      "reference_range": string | null,
+      "flag": "low | normal | high | critical | null"
     }
   ]
 }
 
-If nothing is confidently extractable: return { "gender": null, "measurements": [] }
+Instructions:
+- Treat EACH (test + date) as a separate measurement
+- If a table has multiple dates as columns, expand each column into separate rows
+- Preserve ALL occurrences of a test across time
+- Normalize test names (e.g. 'Blood Urea', 'Urea' → 'blood_urea')
+- Accept only physiologically valid values
+- Reject ambiguous or malformed dates
+- Do not guess dates from context
+- Sort output chronologically by date
 
-TEST NAME MAPPING:
+TEST NAME NORMALIZATION:
 - "Serum Creatinine", "S.Creat", "Creatinine" → "serum_creatinine"
 - "Blood Urea", "Urea", "BUN" → "blood_urea"
 - "eGFR", "Estimated GFR" → "egfr"
@@ -139,7 +148,7 @@ Return ONLY valid JSON. No markdown.`
  * Validate measurement
  */
 function validateMeasurement(measurement) {
-  if (!measurement.test || !measurement.date || measurement.value == null) {
+  if (!measurement.test_name || !measurement.date || measurement.value == null) {
     return false
   }
 
@@ -154,6 +163,21 @@ function validateMeasurement(measurement) {
   const value = parseFloat(measurement.value)
   if (isNaN(value)) return false
 
+  // Normalize test name to canonical key
+  const testNameLower = measurement.test_name.toLowerCase()
+  let canonicalKey = null
+  
+  if (testNameLower.includes('creatinine')) canonicalKey = 'serum_creatinine'
+  else if (testNameLower.includes('urea') || testNameLower.includes('bun')) canonicalKey = 'blood_urea'
+  else if (testNameLower.includes('egfr') || testNameLower.includes('gfr')) canonicalKey = 'egfr'
+  else if (testNameLower.includes('hemoglobin') || testNameLower.includes('hb')) canonicalKey = 'hemoglobin'
+  else if (testNameLower.includes('pth') || testNameLower.includes('parathyroid')) canonicalKey = 'pth'
+  else if (testNameLower.includes('phosphorus') || testNameLower.includes('phosphate')) canonicalKey = 'phosphorus'
+  else if (testNameLower.includes('calcium')) canonicalKey = 'calcium'
+  else if (testNameLower.includes('bicarbonate') || testNameLower.includes('hco3')) canonicalKey = 'bicarbonate'
+  
+  if (!canonicalKey) return false
+
   const ranges = {
     serum_creatinine: [0.1, 20],
     blood_urea: [5, 300],
@@ -165,7 +189,7 @@ function validateMeasurement(measurement) {
     bicarbonate: [5, 50]
   }
 
-  const range = ranges[measurement.test]
+  const range = ranges[canonicalKey]
   if (range && (value < range[0] || value > range[1])) {
     return false
   }
@@ -188,36 +212,44 @@ export function convertToDataPoints(llmData, sourceFile) {
       continue
     }
 
-    const canonicalMap = {
-      serum_creatinine: 'creatinine',
-      blood_urea: 'urea',
-      egfr: 'egfr',
-      hemoglobin: 'hemoglobin',
-      pth: 'pth',
-      phosphorus: 'phosphorus',
-      calcium: 'calcium',
-      bicarbonate: 'bicarbonate'
+    // Normalize test name to canonical key
+    const testNameLower = measurement.test_name.toLowerCase()
+    let canonicalKey = null
+    let displayName = measurement.test_name
+    
+    if (testNameLower.includes('creatinine')) {
+      canonicalKey = 'creatinine'
+      displayName = 'Serum Creatinine'
+    } else if (testNameLower.includes('urea') || testNameLower.includes('bun')) {
+      canonicalKey = 'urea'
+      displayName = 'Blood Urea'
+    } else if (testNameLower.includes('egfr') || testNameLower.includes('gfr')) {
+      canonicalKey = 'egfr'
+      displayName = 'eGFR'
+    } else if (testNameLower.includes('hemoglobin') || testNameLower.includes('hb')) {
+      canonicalKey = 'hemoglobin'
+      displayName = 'Hemoglobin'
+    } else if (testNameLower.includes('pth') || testNameLower.includes('parathyroid')) {
+      canonicalKey = 'pth'
+      displayName = 'PTH'
+    } else if (testNameLower.includes('phosphorus') || testNameLower.includes('phosphate')) {
+      canonicalKey = 'phosphorus'
+      displayName = 'Phosphorus'
+    } else if (testNameLower.includes('calcium')) {
+      canonicalKey = 'calcium'
+      displayName = 'Calcium'
+    } else if (testNameLower.includes('bicarbonate') || testNameLower.includes('hco3')) {
+      canonicalKey = 'bicarbonate'
+      displayName = 'Bicarbonate'
     }
 
-    const canonicalKey = canonicalMap[measurement.test]
     if (!canonicalKey) {
       discardedCount++
       continue
     }
 
-    const displayNames = {
-      serum_creatinine: 'Serum Creatinine',
-      blood_urea: 'Blood Urea',
-      egfr: 'eGFR',
-      hemoglobin: 'Hemoglobin',
-      pth: 'PTH',
-      phosphorus: 'Phosphorus',
-      calcium: 'Calcium',
-      bicarbonate: 'Bicarbonate'
-    }
-
     dataPoints.push({
-      test_name: displayNames[measurement.test] || measurement.test,
+      test_name: displayName,
       canonical_test_key: canonicalKey,
       value: parseFloat(measurement.value),
       unit: measurement.unit || 'unknown',
