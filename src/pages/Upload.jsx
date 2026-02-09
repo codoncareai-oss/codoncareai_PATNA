@@ -4,8 +4,8 @@ import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
 import { extractTextFromPDF } from '../utils/pdfTextExtract'
 import { extractTextFromImage } from '../utils/ocrExtract'
-import { extractClinicalDataPoints } from '../utils/clinicalDataExtractor'
-import { refineClinicalData, convertToDataPoints } from '../utils/llmPrimaryRefiner'
+import { extractRawRows } from '../utils/rawRowExtractor'
+import { normalizeLLM } from '../utils/llmNormalizer'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -64,12 +64,10 @@ export default function Upload() {
     setProcessingStatus('Processing files...')
     setExtractionStats(null)
     
-    const allDataPoints = []
+    const allNormalizedRows = []
     let allExtractedText = ''
-    let totalDeterministic = 0
-    let totalLLM = 0
-    let totalDiscarded = 0
-    let llmActuallyRan = false
+    let totalRawRows = 0
+    let totalNormalizedRows = 0
 
     try {
       // Process each file
@@ -78,14 +76,17 @@ export default function Upload() {
         setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
         
         let extractedText = ''
+        let fileType = 'pdf'
         
         // Extract text based on file type
         if (file.name.endsWith('.csv')) {
           setProcessingStatus('Reading CSV...')
           extractedText = await file.text()
+          fileType = 'csv'
         } else if (file.name.endsWith('.pdf')) {
           setProcessingStatus('Extracting text from PDF...')
           extractedText = await extractTextFromPDF(file)
+          fileType = 'pdf'
           
           if (!extractedText || extractedText.length < 50) {
             console.warn(`Could not extract text from ${file.name}`)
@@ -94,6 +95,7 @@ export default function Upload() {
         } else if (file.name.match(/\.(png|jpg|jpeg)$/i)) {
           setProcessingStatus(`Running OCR on image ${i + 1}...`)
           const ocrResult = await extractTextFromImage(file, setOcrProgress)
+          fileType = 'image'
           
           if (!ocrResult || !ocrResult.text) {
             console.warn(`OCR failed for ${file.name}`)
@@ -104,80 +106,68 @@ export default function Upload() {
         }
         
         if (extractedText) {
-          console.log(`📄 Processing ${file.name}: ${extractedText.length} chars extracted`)
+          console.log(`\n========================================`)
+          console.log(`📄 Processing: ${file.name}`)
+          console.log(`========================================`)
           
-          // STEP 1: Deterministic extraction
-          const deterministicPoints = extractClinicalDataPoints(extractedText, file.name, 1)
-          console.log(`🔍 Deterministic: ${deterministicPoints.length} points`)
-          totalDeterministic += deterministicPoints.length
+          // PHASE 1: RAW ROW EXTRACTION (NO LLM)
+          setProcessingStatus('Phase 1: Extracting raw rows...')
+          const rawRows = extractRawRows(extractedText, fileType)
+          totalRawRows += rawRows.length
+          console.log(`✅ Phase 1 complete: ${rawRows.length} raw rows`)
           
-          // STEP 2: LLM PRIMARY REFINER (ALWAYS RUNS)
-          setProcessingStatus('🤖 AI refining with Phi-4...')
+          // PHASE 2: LLM NORMALIZATION (STRICT MODE)
+          setProcessingStatus('Phase 2: LLM normalizing rows...')
+          const normalizeResult = await normalizeLLM(rawRows)
           
-          try {
-            const llmResult = await refineClinicalData(extractedText)
-            
-            if (llmResult.success && llmResult.data?.measurements?.length > 0) {
-              llmActuallyRan = true
-              const llmPoints = convertToDataPoints(llmResult.data, file.name)
-              console.log(`🤖 LLM refined: ${llmPoints.length} points`)
-              totalLLM += llmPoints.length
-              
-              // STEP 3: Merge - LLM has priority, deduplicate by (test + date)
-              const mergedPoints = [...llmPoints]
-              const llmKeys = new Set(llmPoints.map(p => `${p.canonical_test_key}:${p.date_iso}`))
-              
-              for (const detPoint of deterministicPoints) {
-                const key = `${detPoint.canonical_test_key}:${detPoint.date_iso}`
-                if (!llmKeys.has(key)) {
-                  mergedPoints.push(detPoint)
-                }
-              }
-              
-              console.log(`✅ Merged: ${mergedPoints.length} total (LLM priority)`)
-              allDataPoints.push(...mergedPoints)
-            } else {
-              console.warn(`⚠️ LLM returned no data for ${file.name}`)
-              allDataPoints.push(...deterministicPoints)
-            }
-          } catch (error) {
-            console.error(`❌ LLM refiner failed for ${file.name}:`, error.message)
-            throw error // Hard fail as per requirements
+          if (!normalizeResult.success) {
+            console.error(`❌ Phase 2 failed for ${file.name}:`, normalizeResult.error)
+            throw new Error(normalizeResult.error)
           }
           
+          totalNormalizedRows += normalizeResult.normalizedRows.length
+          console.log(`✅ Phase 2 complete: ${normalizeResult.normalizedRows.length} normalized rows`)
+          
+          // CRITICAL VALIDATION
+          if (rawRows.length !== normalizeResult.normalizedRows.length) {
+            const error = `DATA LOSS DETECTED: ${rawRows.length} raw rows → ${normalizeResult.normalizedRows.length} normalized rows`
+            console.error(`❌ ${error}`)
+            throw new Error(error)
+          }
+          
+          console.log(`✅ VALIDATION PASSED: No data loss`)
+          
+          allNormalizedRows.push(...normalizeResult.normalizedRows)
           allExtractedText += `\n\n=== ${file.name} ===\n${extractedText}`
         }
       }
 
-      console.log(`📊 FINAL EXTRACTION SUMMARY`)
-      console.log(`  Deterministic: ${totalDeterministic} rows`)
-      console.log(`  LLM accepted: ${totalLLM} rows`)
-      console.log(`  Total: ${allDataPoints.length} data points`)
-      console.log(`  LLM ran: ${llmActuallyRan ? 'YES' : 'NO'}`)
+      console.log(`\n========================================`)
+      console.log(`📊 FINAL SUMMARY`)
+      console.log(`========================================`)
+      console.log(`Total raw rows extracted: ${totalRawRows}`)
+      console.log(`Total normalized rows: ${totalNormalizedRows}`)
+      console.log(`✅ Data integrity: ${totalRawRows === totalNormalizedRows ? 'VERIFIED' : 'FAILED'}`)
 
       setExtractionStats({
-        deterministic: totalDeterministic,
-        llm: totalLLM,
-        total: allDataPoints.length,
-        llmRan: llmActuallyRan
+        rawRows: totalRawRows,
+        normalizedRows: totalNormalizedRows,
+        dataIntegrity: totalRawRows === totalNormalizedRows
       })
 
-      if (allDataPoints.length === 0) {
+      if (allNormalizedRows.length === 0) {
         setProcessing(false)
         alert('No clinical data could be extracted from the uploaded files.')
         return
       }
 
       // Store and navigate
-      sessionStorage.setItem('clinicalDataPoints', JSON.stringify(allDataPoints))
+      sessionStorage.setItem('normalizedRows', JSON.stringify(allNormalizedRows))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
       sessionStorage.setItem('extractedText', allExtractedText)
       
-      navigate('/understanding', {
-        state: {
-          dataPoints: allDataPoints
-        }
-      })
+      // For now, navigate to results (Phase 3+ will handle conversion)
+      navigate('/results')
       
     } catch (error) {
       console.error('Processing error:', error)
@@ -325,17 +315,13 @@ export default function Upload() {
 
             {extractionStats && (
               <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  {extractionStats.llmRan && (
-                    <span className="text-sm font-semibold text-blue-700">
-                      🤖 AI-refined using Phi-4
-                    </span>
-                  )}
-                </div>
                 <div className="text-sm text-gray-700 space-y-1">
-                  <p>Deterministic rows: {extractionStats.deterministic}</p>
-                  <p>LLM accepted rows: {extractionStats.llm}</p>
-                  <p className="font-semibold">Total extracted: {extractionStats.total}</p>
+                  <p className="font-semibold">✅ Two-Phase Extraction Complete</p>
+                  <p>Phase 1 (Raw): {extractionStats.rawRows} rows</p>
+                  <p>Phase 2 (Normalized): {extractionStats.normalizedRows} rows</p>
+                  <p className={extractionStats.dataIntegrity ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>
+                    Data Integrity: {extractionStats.dataIntegrity ? '✅ VERIFIED (No data loss)' : '❌ FAILED'}
+                  </p>
                 </div>
               </div>
             )}
