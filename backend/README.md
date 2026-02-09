@@ -2,7 +2,16 @@
 
 PaddleOCR-powered backend for raw row extraction.
 
-## Setup
+## Quick Deploy (Railway)
+
+```bash
+cd backend
+./deploy-railway.sh
+```
+
+Copy the URL and set `VITE_BACKEND_URL` in Vercel.
+
+## Local Development
 
 ```bash
 cd backend
@@ -17,7 +26,7 @@ Server runs on http://localhost:8000
 ### POST /ocr/extract
 Extract raw rows from PDF or image.
 
-**Input:** Multipart file upload
+**Input:** Multipart file upload  
 **Output:**
 ```json
 {
@@ -35,14 +44,24 @@ Extract raw rows from PDF or image.
 ### GET /health
 Health check endpoint.
 
-## Deployment
-
-Set environment variable:
-```bash
-export BACKEND_URL=https://your-backend.com
+**Output:**
+```json
+{"status": "ok", "ocr": "paddleocr"}
 ```
 
-Deploy to Railway/Render/Fly.io with:
-```bash
-uvicorn main:app --host 0.0.0.0 --port $PORT
-```
+## Deployment Options
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed guides:
+- Railway (recommended)
+- Render
+- EC2
+
+## Requirements
+
+- Python 3.11+
+- 2GB RAM minimum (for PaddleOCR)
+- HTTPS endpoint for production
+
+## CORS
+
+Backend allows all origins by default. Safe for Vercel deployment.
