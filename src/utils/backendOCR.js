@@ -1,7 +1,7 @@
 // Backend OCR Client
 // Calls PaddleOCR backend for raw row extraction
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://codoncareai-backend.duckdns.org'
 
 /**
  * Extract raw rows from file using backend PaddleOCR
@@ -14,11 +14,17 @@ export async function extractRawRowsBackend(file) {
   const formData = new FormData()
   formData.append('file', file)
   
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 300000) // 5 minutes
+  
   try {
-    const response = await fetch(`${BACKEND_URL}/ocr/extract`, {
+    const response = await fetch(`${BACKEND_URL}/extract`, {
       method: 'POST',
-      body: formData
+      body: formData,
+      signal: controller.signal
     })
+    
+    clearTimeout(timeout)
     
     if (!response.ok) {
       const error = await response.text()
@@ -32,6 +38,10 @@ export async function extractRawRowsBackend(file) {
     return result.rows
     
   } catch (error) {
+    clearTimeout(timeout)
+    if (error.name === 'AbortError') {
+      throw new Error('OCR request timed out after 5 minutes. File may be too large or backend is overloaded.')
+    }
     console.error('❌ Backend OCR error:', error.message)
     throw error
   }
