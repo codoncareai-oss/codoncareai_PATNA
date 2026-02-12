@@ -2,9 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import Disclaimer from '../components/Disclaimer'
-import { extractRawRowsBackend } from '../utils/backendOCR'
-import { extractRawRows } from '../utils/rawRowExtractor'
-import { normalizeLLM } from '../utils/llmNormalizer'
+import { analyzeReport } from '../utils/backendOCR'
 
 export default function Upload() {
   const navigate = useNavigate()
@@ -60,108 +58,26 @@ export default function Upload() {
     }
 
     setProcessing(true)
-    setProcessingStatus('Processing files...')
-    setExtractionStats(null)
-    
-    const allNormalizedRows = []
-    let totalRawRows = 0
-    let totalNormalizedRows = 0
+    setProcessingStatus('Analyzing report...')
 
     try {
-      // Process each file
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        setCurrentFile(`${i + 1}/${files.length}: ${file.name}`)
-        
-        let rawRows = []
-        
-        console.log(`\n========================================`)
-        console.log(`📄 Processing: ${file.name}`)
-        console.log(`========================================`)
-        
-        // PHASE 1: RAW ROW EXTRACTION (NO LLM)
-        if (file.name.endsWith('.csv')) {
-          // CSV: Use simple text extraction
-          setProcessingStatus('Phase 1: Extracting CSV rows...')
-          const csvText = await file.text()
-          rawRows = extractRawRows(csvText, 'csv')
-        } else if (file.name.endsWith('.pdf') || file.name.match(/\.(png|jpg|jpeg)$/i)) {
-          // PDF/Image: Use backend PaddleOCR
-          setProcessingStatus('Phase 1: Running PaddleOCR...')
-          try {
-            rawRows = await extractRawRowsBackend(file)
-          } catch (error) {
-            console.error(`❌ Backend OCR failed for ${file.name}:`, error.message)
-            alert(`Backend OCR failed: ${error.message}. Make sure backend is running.`)
-            throw error
-          }
-        } else {
-          console.warn(`Unsupported file type: ${file.name}`)
-          continue
-        }
-        
-        if (rawRows.length === 0) {
-          console.warn(`No rows extracted from ${file.name}`)
-          continue
-        }
-        
-        totalRawRows += rawRows.length
-        console.log(`✅ Phase 1 complete: ${rawRows.length} raw rows`)
-        
-        // PHASE 2: LLM NORMALIZATION (STRICT MODE)
-        setProcessingStatus('Phase 2: LLM normalizing rows...')
-        const normalizeResult = await normalizeLLM(rawRows)
-        
-        if (!normalizeResult.success) {
-          console.error(`❌ Phase 2 failed for ${file.name}:`, normalizeResult.error)
-          throw new Error(normalizeResult.error)
-        }
-        
-        totalNormalizedRows += normalizeResult.normalizedRows.length
-        console.log(`✅ Phase 2 complete: ${normalizeResult.normalizedRows.length} normalized rows`)
-        
-        // CRITICAL VALIDATION
-        if (rawRows.length !== normalizeResult.normalizedRows.length) {
-          const error = `DATA LOSS DETECTED: ${rawRows.length} raw rows → ${normalizeResult.normalizedRows.length} normalized rows`
-          console.error(`❌ ${error}`)
-          throw new Error(error)
-        }
-        
-        console.log(`✅ VALIDATION PASSED: No data loss`)
-        
-        allNormalizedRows.push(...normalizeResult.normalizedRows)
-      }
-
-      console.log(`\n========================================`)
-      console.log(`📊 FINAL SUMMARY`)
-      console.log(`========================================`)
-      console.log(`Total raw rows extracted: ${totalRawRows}`)
-      console.log(`Total normalized rows: ${totalNormalizedRows}`)
-      console.log(`✅ Data integrity: ${totalRawRows === totalNormalizedRows ? 'VERIFIED' : 'FAILED'}`)
-
+      const file = files[0]
+      setCurrentFile(`${file.name}`)
+      
+      const result = await analyzeReport(file, { birthYear: year, gender })
+      
       setExtractionStats({
-        rawRows: totalRawRows,
-        normalizedRows: totalNormalizedRows,
-        dataIntegrity: totalRawRows === totalNormalizedRows
+        rowCount: result.rows?.length || 0,
+        ckdDetected: result.ckd_detected || false
       })
 
-      if (allNormalizedRows.length === 0) {
-        setProcessing(false)
-        alert('No clinical data could be extracted from the uploaded files.')
-        return
-      }
-
-      // Store and navigate
-      sessionStorage.setItem('normalizedRows', JSON.stringify(allNormalizedRows))
+      sessionStorage.setItem('analysisResult', JSON.stringify(result))
       sessionStorage.setItem('patientInfo', JSON.stringify({ birthYear: year, gender, notes }))
       
-      // For now, navigate to results (Phase 3+ will handle conversion)
       navigate('/results')
       
     } catch (error) {
-      console.error('Processing error:', error)
-      setProcessing(false)
-      alert('An error occurred while processing the files. Please try again.')
+      alert(`Analysis failed: ${error.message}`)
     } finally {
       setProcessing(false)
     }
@@ -305,12 +221,9 @@ export default function Upload() {
             {extractionStats && (
               <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <div className="text-sm text-gray-700 space-y-1">
-                  <p className="font-semibold">✅ Two-Phase Extraction Complete</p>
-                  <p>Phase 1 (Raw): {extractionStats.rawRows} rows</p>
-                  <p>Phase 2 (Normalized): {extractionStats.normalizedRows} rows</p>
-                  <p className={extractionStats.dataIntegrity ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>
-                    Data Integrity: {extractionStats.dataIntegrity ? '✅ VERIFIED (No data loss)' : '❌ FAILED'}
-                  </p>
+                  <p className="font-semibold">✅ Analysis Complete</p>
+                  <p>Rows extracted: {extractionStats.rowCount}</p>
+                  <p>CKD detected: {extractionStats.ckdDetected ? '⚠️ YES' : '✅ NO'}</p>
                 </div>
               </div>
             )}
