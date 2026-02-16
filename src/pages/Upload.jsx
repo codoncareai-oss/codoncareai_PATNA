@@ -64,7 +64,7 @@ export default function Upload() {
       const file = files[0]
       setCurrentFile(`${file.name}`)
       
-      const result = await analyzeReport(file, { birthYear: year, gender })
+      const result = await analyzeReport(file)
       
       setExtractionStats({
         rowCount: result.rows?.length || 0,
