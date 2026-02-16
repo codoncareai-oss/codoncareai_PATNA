@@ -26,8 +26,8 @@ export default function Results() {
 
   if (!result) return null
 
-  const { kidney_analysis, trend, ckd_detected } = result
-  const hasData = kidney_analysis && kidney_analysis.length >= 2
+  const { kidney_analysis, trend, ckd_detected, egfr_values } = result
+  const hasData = egfr_values && egfr_values.length >= 2
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
