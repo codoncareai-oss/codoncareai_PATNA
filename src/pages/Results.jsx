@@ -25,27 +25,43 @@ export default function Results() {
 
   if (!result) return null
 
-  const { egfr_values = [], stages = [], trend } = result
+  const {
+    egfr_values = [],
+    stages = [],
+    trend,
+    risk_level,
+    clinical_summary,
+  } = result
 
-  const hasData = egfr_values.length >= 2
+  const hasData = Array.isArray(egfr_values) && egfr_values.length >= 1
 
-  // Convert backend format to chart format
   const chartData = egfr_values.map(([date, value]) => ({
     date,
-    egfr: value
+    egfr: value,
   }))
 
-  const latestStage = stages.length > 0 ? stages[stages.length - 1] : null
-  const latestEGFR =
+  const latestStage =
+    stages.length > 0 ? stages[stages.length - 1] : null
+
+  const latestEgfr =
     egfr_values.length > 0
       ? egfr_values[egfr_values.length - 1][1]
       : null
+
+  const getRiskColor = (risk) => {
+    if (!risk) return "text-gray-600"
+    if (risk.toLowerCase() === "low") return "text-green-600"
+    if (risk.toLowerCase() === "moderate") return "text-yellow-600"
+    if (risk.toLowerCase() === "high") return "text-red-600"
+    return "text-gray-600"
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <Disclaimer />
 
+        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -55,20 +71,20 @@ export default function Results() {
             Kidney Function Analysis
           </h1>
           <p className="text-gray-600">
-            Patient: {patientInfo.gender === 'male' ? 'Male' : 'Female'},
+            Patient: {patientInfo.gender === "male" ? "Male" : "Female"},
             Born {patientInfo.birthYear}
           </p>
         </motion.div>
 
-        {hasData ? (
+        {hasData && (
           <>
-            {/* eGFR Trend */}
+            {/* Trend Card */}
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               className="bg-white rounded-xl shadow-lg p-6 mb-8"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold text-gray-900">
                   eGFR Trend
                 </h2>
@@ -82,60 +98,68 @@ export default function Results() {
               </p>
             </motion.div>
 
-            {/* Stage Card */}
+            {/* CKD Stage */}
             {latestStage && (
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 className="bg-white rounded-xl shadow-lg p-6 mb-8"
               >
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                  CKD Stage
-                </h2>
-
-                <div className="text-4xl font-bold text-red-600 mb-2">
+                <h2 className="text-2xl font-bold mb-4">CKD Stage</h2>
+                <div className="text-4xl font-bold text-red-600">
                   {latestStage}
                 </div>
+              </motion.div>
+            )}
 
-                <div className="text-lg font-semibold text-gray-900">
-                  {latestStage === 'Stage 1' && 'Normal or high kidney function'}
-                  {latestStage === 'Stage 2' && 'Mild decrease in kidney function'}
-                  {latestStage === 'Stage 3' && 'Moderate decrease in kidney function'}
-                  {latestStage === 'Stage 4' && 'Severe decrease in kidney function'}
-                  {latestStage === 'Stage 5' && 'Kidney failure (ESRD)'}
+            {/* Risk Level */}
+            {risk_level && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="bg-white rounded-xl shadow-lg p-6 mb-8"
+              >
+                <h2 className="text-2xl font-bold mb-4">
+                  Risk Level
+                </h2>
+                <div className={`text-3xl font-bold ${getRiskColor(risk_level)}`}>
+                  {risk_level}
                 </div>
+              </motion.div>
+            )}
+
+            {/* Clinical Summary */}
+            {clinical_summary && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="bg-white rounded-xl shadow-lg p-6 mb-8"
+              >
+                <h2 className="text-2xl font-bold mb-4">
+                  Clinical Summary
+                </h2>
+                <p className="text-gray-700 leading-relaxed">
+                  {clinical_summary}
+                </p>
               </motion.div>
             )}
 
             {/* Latest eGFR */}
-            {latestEGFR !== null && (
+            {latestEgfr && (
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 className="bg-white rounded-xl shadow-lg p-6 mb-8"
               >
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                <h2 className="text-2xl font-bold mb-4">
                   Latest eGFR
                 </h2>
                 <div className="text-3xl font-bold text-blue-600">
-                  {latestEGFR} mL/min/1.73m²
+                  {latestEgfr} mL/min/1.73m²
                 </div>
               </motion.div>
             )}
           </>
-        ) : (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-yellow-50 border-l-4 border-yellow-500 p-6 mb-8"
-          >
-            <h2 className="text-xl font-bold text-yellow-900 mb-2">
-              Partial Data Detected
-            </h2>
-            <p className="text-yellow-800">
-              Need creatinine values from at least 2 different dates for complete analysis.
-            </p>
-          </motion.div>
         )}
 
         <div className="mt-8 flex space-x-4">
